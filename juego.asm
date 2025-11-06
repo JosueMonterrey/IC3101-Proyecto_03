@@ -1,41 +1,57 @@
 .MODEL large
 .STACK 100h
 
-.DATA ; 1250
-; [GRAFICOS]
-buffPantalla            DB 64000 DUP (?)
-pantallaX               DW 320
-pantallaY               DW 200
-x                       DW 0
-y                       DW 0
-pantallaBorderSpace     EQU 8       ; cantidad de pixeles a los lados de los bordes para que los enemigos no se salgan de la pantalla
+.DATA
+    ; [DATA GRAFICOS]
+    pantallaX               DW  320
+    pantallaY               DW  200
+    x                       DW  0
+    y                       DW  0
+    pantallaBorderSpace     EQU 8       ; cantidad de pixeles a los lados de los bordes para que los enemigos no se salgan de la pantalla
 
-; [SPRITES]
-handle          DW  ?                    ; Handle del archivo a leer
-spriteJugador   DB  '..\PLAYER.BIN', 0
-spriteBala      DB  '..\BULLET.BIN', 0
-spriteBrick     DB  '..\BRICK.BIN', 0
+    ; [DATA SPRITES]
+    handle          DW  ?                    ; Handle del archivo a leer
+    spriteJugador   DB  '..\PLAYER.BIN', 0
+    spriteBala      DB  '..\BULLET.BIN', 0
+    spriteBrick     DB  '..\BRICK.BIN', 0
 
-; [word x, word y, byte dir, byte size, byte[256] colors]
-buffJugador     DB  262 DUP (?) ; Buffer para leer bytes del jugador
-buffBala        DB  32 DUP (?) ; Buffer para leer bytes de la bala
-buffWall        DB  14000 DUP (0)   ; Un array con capacidad para 2800 paredes de la forma [word x, word y, byte type:alive]
+    ; [word x, word y, byte dir, byte size, byte[256] colors]
+    buffJugador     DB  262 DUP (?) ; Buffer para leer bytes del jugador
+    buffBala        DB  32  DUP (?) ; Buffer para leer bytes de la bala
+    buffBrick       DB  22  DUP (?) ; Buffer para leer bytes de los ladrillos
 
-; [GAMEPLPLAY]
-tamUnidad           DW  8
+    ; [DATA GAMEPLAY]
+    tamUnidad           DW  8
 
-jugadorBalaOffset   EQU 00h     ; sin offset la bala spawnea en la esquina del sprite del jugador en vez del centro
-tiempoDeDisparo     EQU 1       ; 10 frames entre disparo del jugador
-disparoCoolDown     DB  0
+    jugadorBalaOffset   EQU 00h     ; sin offset la bala spawnea en la esquina del sprite del jugador en vez del centro
+    tiempoDeDisparo     EQU 1       ; 10 frames entre disparo del jugador
+    disparoCoolDown     DB  0
 
-; Informacion de cada bala en la escena [posX (WORD), posY (WORD), direccion (BYTE), desplazamiento (BYTE)]
-arrayBalas      DB  120 DUP (0Fh)
-arrayBalasLen   EQU 0014h   ; 50 en decimal (pueden haber maximo 50 balas en escena)
-balaDataLen     EQU 0006h   ; cada bala en el array de balas tiene 6 bytes de informacion
+    ; Informacion de cada bala en la escena [posX (WORD), posY (WORD), direccion (BYTE), desplazamiento (BYTE)]
+    arrayBalas      DB  120 DUP (0Fh)
+    arrayBalasLen   EQU 0014h   ; 50 en decimal (pueden haber maximo 50 balas en escena)
+    balaDataLen     EQU 0006h   ; cada bala en el array de balas tiene 6 bytes de informacion
+
+    ; Informacion de cada pared en la escena [word x, word y, byte type (0=destruida)]
+    arrayParedesLen EQU 100
+    paredDataLen    EQU 5
+
+.DATA_BUFF_PANTALLA segment
+    buffPantalla            DB  64000 DUP (0)
+.DATA_BUFF_PANTALLA ends
+
+.DATA_ARRAY_PAREDES segment
+arrayParedes    DB  500 DUP (0)   ; Un array con capacidad para 2800 paredes
+.DATA_ARRAY_PAREDES ends
 
 .CODE
 dibujarPantalla PROC
+    mov AX, seg .DATA_BUFF_PANTALLA
+    mov DS, AX
+    assume DS:.DATA_BUFF_PANTALLA
+
     lea SI, buffPantalla
+
     
     mov AX, 0A000h           ; segmento de memoria de video
     mov ES, AX
@@ -43,18 +59,18 @@ dibujarPantalla PROC
     xor DI, DI              ; destino = inicio de VRAM
     mov CX, 32000           ; 320*200 = 64000 bytes → 32000 palabras
     rep movsw               ; copiar buffer (64 KB aprox)
+    mov AX, @data
+    mov DS, AX
+    assume DS:@data
     
     ret
 dibujarPantalla ENDP
 
 limpiarPantalla PROC
-    mov AH, 02h
-    mov DL, 0Dh
-    int 21h
-
-    mov AX, @data
+    mov AX, seg .DATA_BUFF_PANTALLA
     mov ES, AX
-    mov AL, 00h
+
+    xor AX, AX
 
     lea DI, buffPantalla
 
@@ -76,7 +92,7 @@ vSync PROC
     ret
 vSync ENDP
 
-cargarObjeto PROC ; DI = filename, SI = buffer
+cargarObjeto PROC   ; DS:.DATA_SPRITES | DI = filename, SI = buffer'
     ;---------------------------------
     ; Abrir archivo
     ;---------------------------------
@@ -116,9 +132,6 @@ cargarObjeto PROC ; DI = filename, SI = buffer
 cargarObjeto ENDP
 
 dibujarObjeto PROC ; SI = buffer
-    mov AX, 0A000h       ; Segmento de video
-    mov ES, AX
-
     mov BX, 0             ; Contador de píxeles
     mov CX, 0
     mov CL, [SI + 5]      ; Filas por recorrer
@@ -143,10 +156,20 @@ dibujarObjeto PROC ; SI = buffer
 
             ; Dibujar píxel
             mov AL, [SI + BX + 6] ; Color del píxel
-            ; stosb
+            push AX
+
+            mov AX, seg .DATA_BUFF_PANTALLA
+            mov DS, AX
+            assume DS:.DATA_BUFF_PANTALLA
+
+            pop AX
             lea DI, buffPantalla
             add DI, DX
             mov [DI], AL
+
+            mov AX, @data
+            mov DS, AX
+            assume DS:@data
             
             inc BX
             inc x
@@ -400,6 +423,65 @@ dibujarBalas PROC
     ret
 dibujarBalas ENDP
 
+dibujarParedes PROC
+    mov CX, -1
+    dibujarParedes_forEach_pared:
+        inc CX
+        cmp CX, arrayParedesLen
+        jge dibujarParedes_return          ; salir del ciclo si ya iteramos sobre todas las paredes del array
+
+        mov AX, paredDataLen
+        mov BX, CX
+        mul BX
+        mov BX, AX                          ; BX = paredIndex
+
+        mov AX, seg .DATA_ARRAY_PAREDES
+        mov DS, AX
+        assume DS:.DATA_ARRAY_PAREDES
+
+        lea DI, arrayParedes
+        mov AH, [DI + BX + 4]               ; AH = tipo de pared
+
+        mov AX, @data
+        mov DS, AX
+        assume DS:@data
+
+        cmp AH, 0
+        je  dibujarParedes_forEach_pared    ; Si el tipo de pared = 0, entonces significa que está destruida. NO hay que dibujarla.
+
+        ; Si la pared sí existe, hay que determinar cual buffer usar para dibujar su sprite correctamente
+        cmp AH, 1                           ; tipo 1 = brick
+        je  dibujarParedes_typeBrick
+
+
+        dibujarParedes_typeBrick:
+        lea SI, buffBrick
+        jmp dibujarParedes_dibujar
+
+
+        dibujarParedes_dibujar:
+        mov AX, seg .DATA_ARRAY_PAREDES
+        mov DS, AX
+        assume DS:.DATA_ARRAY_PAREDES
+        mov AX, [DI + BX]                   ; AX = arrayParedes[paredIndex].posX
+        mov DX, [DI + BX + 2]               ; DX = arrayParedes[paredIndex].posY
+
+        mov AX, @data
+        mov DS, AX
+        assume DS:@data
+        mov [SI], AX                        ; buffBarrera.posX = AX
+        mov [SI + 2], DX                    ; buffBarrera.posY = DX
+
+        push CX
+        call dibujarObjeto
+        pop CX
+
+        jmp dibujarParedes_forEach_pared
+    
+    dibujarParedes_return:
+    ret
+dibujarParedes ENDP
+
 
 main PROC
     mov AX, @data
@@ -409,7 +491,9 @@ main PROC
     mov AX, 0013h
     int 10h
     
-
+    ;-------------------;
+    ; PRECARGAR SPRITES ;
+    ;-------------------;
     lea DI, spriteJugador
     lea SI, buffJugador
     call cargarObjeto
@@ -418,6 +502,13 @@ main PROC
     lea SI, buffBala
     call cargarObjeto
 
+    lea DI, spriteBrick
+    lea SI, buffBrick
+    call cargarObjeto
+
+    ;-------;
+    ; JUEGO ;
+    ;-------;
     main_loop:
         call vSync
         call dibujarPantalla
@@ -432,6 +523,8 @@ main PROC
         call dibujarObjeto
 
         call dibujarBalas
+
+        call dibujarParedes
 
         call calcDisparoCoolDown
     
