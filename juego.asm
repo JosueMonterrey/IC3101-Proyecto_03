@@ -13,12 +13,17 @@
     handle          DW  ?                    ; Handle del archivo a leer
     spriteJugador   DB  '..\PLAYER.BIN', 0
     spriteBala      DB  '..\BULLET.BIN', 0
+    wallsDataPath   DB  '..\WALLS.BIN', 0
     spriteBrick     DB  '..\BRICK.BIN', 0
+    spriteSteel     DB  '..\STEEL.BIN', 0
+    spriteBush      DB  '..\BUSH.BIN', 0
 
     ; [word x, word y, byte dir, byte size, byte[256] colors]
     buffJugador     DB  262 DUP (?) ; Buffer para leer bytes del jugador
     buffBala        DB  32  DUP (?) ; Buffer para leer bytes de la bala
-    buffBrick       DB  22  DUP (?) ; Buffer para leer bytes de los ladrillos
+    buffBrick       DB  262 DUP (?) ; Buffer para leer bytes de los ladrillos
+    buffSteel       DB  262 DUP (?) ; Buffer para leer bytes del metal
+    buffBush        DB  262 DUP (?) ; Buffer para leer bytes de los arbustos
 
     ; [DATA GAMEPLAY]
     tamUnidad           DW  8
@@ -33,6 +38,10 @@
     balaDataLen     EQU 0006h   ; cada bala en el array de balas tiene 6 bytes de informacion
 
     ; Informacion de cada pared en la escena [word x, word y, byte type (0=destruida)]
+    wallsData       DB  160 DUP (?) ; Matris de 16*1
+    wallsDataColLen EQU 16
+    wallsDataRowLen EQU 10
+    wallSizePixels  EQU 16
     arrayParedesLen EQU 100
     paredDataLen    EQU 5
 
@@ -424,61 +433,69 @@ dibujarBalas PROC
 dibujarBalas ENDP
 
 dibujarParedes PROC
-    mov CX, -1
-    dibujarParedes_forEach_pared:
-        inc CX
-        cmp CX, arrayParedesLen
-        jge dibujarParedes_return          ; salir del ciclo si ya iteramos sobre todas las paredes del array
+    mov x, 0
+    mov y, 0
 
-        mov AX, paredDataLen
-        mov BX, CX
-        mul BX
-        mov BX, AX                          ; BX = paredIndex
+    lea DI, wallsData
 
-        mov AX, seg .DATA_ARRAY_PAREDES
-        mov DS, AX
-        assume DS:.DATA_ARRAY_PAREDES
+    mov BX, -1
+    dibujarParedes_forPared:
+        inc BX
+        cmp BX, wallsDataRowLen * wallsDataColLen
+        jge end_dibujarParedes_forPared
 
-        lea DI, arrayParedes
-        mov AH, [DI + BX + 4]               ; AH = tipo de pared
+        mov AL, [DI + BX]   ; AL = pared.type
 
-        mov AX, @data
-        mov DS, AX
-        assume DS:@data
+        cmp AL, 0                       ; 0 = no hay pared
+        je  dibujarParedes_continue     ; continue
 
-        cmp AH, 0
-        je  dibujarParedes_forEach_pared    ; Si el tipo de pared = 0, entonces significa que está destruida. NO hay que dibujarla.
+        cmp AL, 1                       ; 1 = bricks
+        je  dibujarParedes_Bricks
 
-        ; Si la pared sí existe, hay que determinar cual buffer usar para dibujar su sprite correctamente
-        cmp AH, 1                           ; tipo 1 = brick
-        je  dibujarParedes_typeBrick
+        cmp AL, 2                       ; 2 = steel
+        je  dibujarParedes_Steel
 
+        cmp AL, 3                       ; 3 = bush
+        je  dibujarParedes_Bush
 
-        dibujarParedes_typeBrick:
-        lea SI, buffBrick
-        jmp dibujarParedes_dibujar
-
+        dibujarParedes_Bricks:
+            lea SI, buffBrick
+            jmp dibujarParedes_dibujar
+        
+        dibujarParedes_Steel:
+            lea SI, buffSteel
+            jmp dibujarParedes_dibujar
+        
+        dibujarParedes_Bush:
+            lea SI, buffBush
+            jmp dibujarParedes_dibujar
+        
 
         dibujarParedes_dibujar:
-        mov AX, seg .DATA_ARRAY_PAREDES
-        mov DS, AX
-        assume DS:.DATA_ARRAY_PAREDES
-        mov AX, [DI + BX]                   ; AX = arrayParedes[paredIndex].posX
-        mov DX, [DI + BX + 2]               ; DX = arrayParedes[paredIndex].posY
+            mov AX, x
+            mov [SI], AX
+            mov AX, y
+            mov [SI + 2], AX
 
-        mov AX, @data
-        mov DS, AX
-        assume DS:@data
-        mov [SI], AX                        ; buffBarrera.posX = AX
-        mov [SI + 2], DX                    ; buffBarrera.posY = DX
+            push DI
+            push BX
+            push x
+            push y
 
-        push CX
-        call dibujarObjeto
-        pop CX
+            call dibujarObjeto
 
-        jmp dibujarParedes_forEach_pared
+            pop y
+            pop x
+            pop BX
+            pop DI
+
     
-    dibujarParedes_return:
+        dibujarParedes_continue:
+            add x, wallSizePixels
+            jmp dibujarParedes_forPared
+
+    end_dibujarParedes_forPared:
+
     ret
 dibujarParedes ENDP
 
@@ -502,9 +519,22 @@ main PROC
     lea SI, buffBala
     call cargarObjeto
 
+    lea DI, wallsDataPath
+    lea SI, wallsData
+    call cargarObjeto
+
     lea DI, spriteBrick
     lea SI, buffBrick
     call cargarObjeto
+
+    lea DI, spriteSteel
+    lea SI, buffSteel
+    call cargarObjeto
+
+    lea DI, spriteBush
+    lea SI, buffBush
+    call cargarObjeto
+
 
     ;-------;
     ; JUEGO ;
