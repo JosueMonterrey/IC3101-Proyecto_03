@@ -26,7 +26,7 @@
     buffBush        DB  262 DUP (?) ; Buffer para leer bytes de los arbustos
 
     ; [DATA GAMEPLAY]
-    tamUnidad           DW  8
+    tamUnidad           DW  10
 
     jugadorBalaOffset   EQU 00h     ; sin offset la bala spawnea en la esquina del sprite del jugador en vez del centro
     tiempoDeDisparo     EQU 1       ; 10 frames entre disparo del jugador
@@ -41,7 +41,7 @@
     wallsData       DB  160 DUP (?) ; Matris de 16*1
     wallsDataColLen EQU 16
     wallsDataRowLen EQU 10
-    wallSizePixels  EQU 16
+    wallSizePixels  EQU 20
     arrayParedesLen EQU 100
     paredDataLen    EQU 5
 
@@ -141,52 +141,65 @@ cargarObjeto PROC   ; DS:.DATA_SPRITES | DI = filename, SI = buffer'
 cargarObjeto ENDP
 
 dibujarObjeto PROC ; SI = buffer
-    mov BX, 0             ; Contador de píxeles
-    mov CX, 0
-    mov CL, [SI + 5]      ; Filas por recorrer
+    ;--------------;
+    ; Cargar datos ;
+    ;--------------;
+    mov AX, [SI]
+    mov CX, AX              ; CX = posX
 
     mov AX, [SI + 2]
-    mov y, AX             ; Fila inicial
+    mov BP, AX              ; BP = posY
 
-    cld                   ; Incrementos positivos
-    dibujarObjeto_filas:
-        push CX
-        mov CL, [SI + 5]      ; Columnas por recorrer
+    xor BX, BX
+    mov BL, [SI + 5]        ; BX = columnas
+    mov DX, BX              ; DX = filas
 
-        mov AX, [SI]
-        mov x, AX             ; Columna inicial
+    add SI, 6               ; SI apunta al array de pixeles
 
-        dibujarObjeto_columnas:
-            ; Calcular coordenadas (DX = y*320 + x)
-            mov AX, y
-            mul pantallaX         ; AX *= 320
-            add AX, x
-            mov DX, AX
+    ;------------------------;
+    ; Preparar buff pantalla ;
+    ;------------------------;
+    push DS                             ; guardar momentaneamente el segmento de data
 
-            ; Dibujar píxel
-            mov AL, [SI + BX + 6] ; Color del píxel
-            push AX
+    mov AX, seg .DATA_BUFF_PANTALLA
+    mov DS, AX                          ; apuntar al segmento del buffer de pantalla momentaneamente
+    mov ES, AX                          ; ES tambien debe apuntar al segmento del buffer
+    assume DS:.DATA_BUFF_PANTALLA
 
-            mov AX, seg .DATA_BUFF_PANTALLA
-            mov DS, AX
-            assume DS:.DATA_BUFF_PANTALLA
+    lea DI, buffPantalla                ; cargar el buffer de pantalla a DI
 
-            pop AX
-            lea DI, buffPantalla
-            add DI, DX
-            mov [DI], AL
+    pop DS                              ; regresar al segmento de data
+    assume DS:@data
 
-            mov AX, @data
-            mov DS, AX
-            assume DS:@data
-            
-            inc BX
-            inc x
-        loop dibujarObjeto_columnas
+    ;-------------------------;
+    ; Calcular offset inicial ;
+    ;-------------------------;
+    ; me quedé sin registros para usar asi que guardemos DX para usarlo momentaneamente
+    push DX
 
-        inc y
-        pop CX
-    loop dibujarObjeto_filas
+    mov AX, BP
+    mov DX, 320
+    mul DX
+    add AX, CX
+    add DI, AX              ; DI = posY * 320 + posX
+
+    pop DX
+
+    cld                     ; para iterar hacia adelante
+
+    dibujarObjeto_loop:
+        mov CX, BX
+
+        ; DS:SI -> ES:DI
+        rep movsb           ; copiar fila de pixeles completa al buffer
+
+        ; calcular direccion de la siguiente fila. DI += 320 - columnas
+        add DI, 320
+        sub DI, BX
+
+        dec DX              ; filas--
+        jnz dibujarObjeto_loop      ; si todavia quedan filas por dibujar seguir iterando
+
     ret
 dibujarObjeto ENDP
 
@@ -231,6 +244,8 @@ procesarInput PROC
         mov [SI + 4], AL        ; dir=0 -> arriba
 
         mov AX, [SI + 2]
+
+        call calcColisionConPared
 
         sub AX, tamUnidad
         mov [SI + 2], AX
@@ -491,7 +506,22 @@ dibujarParedes PROC
 
     
         dibujarParedes_continue:
+            push BX
+
             add x, wallSizePixels
+
+            xor DX, DX
+            mov AX, x
+            mov BX, wallsDataColLen * wallSizePixels
+            div BX                      ; x / (wallsDataColLen (16) * 20 pixels)
+
+            pop BX
+            cmp DX, 0
+            jne dibujarParedes_forPared
+
+            mov x, 0
+            add y, wallSizePixels
+
             jmp dibujarParedes_forPared
 
     end_dibujarParedes_forPared:
@@ -499,6 +529,9 @@ dibujarParedes PROC
     ret
 dibujarParedes ENDP
 
+calcColisionConPared PROC   ; SI = buffer objeto
+    ret
+calcColisionConPared ENDP
 
 main PROC
     mov AX, @data
@@ -542,7 +575,6 @@ main PROC
     main_loop:
         call vSync
         call dibujarPantalla
-
         ; call updateGUI
 
         call limpiarPantalla
