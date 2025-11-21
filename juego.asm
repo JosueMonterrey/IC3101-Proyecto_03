@@ -3,11 +3,11 @@
 
 .DATA
     ; [DATA GRAFICOS]
-    pantallaX               DW  320
-    pantallaY               DW  200
+    pantallaX               EQU  320
+    pantallaY               EQU  200
     x                       DW  0
     y                       DW  0
-    pantallaBorderSpace     EQU 8       ; cantidad de pixeles a los lados de los bordes para que los enemigos no se salgan de la pantalla
+    pantallaBorderSpace     EQU 0       ; cantidad de pixeles a los lados de los bordes para que los enemigos no se salgan de la pantalla
 
     ; [DATA SPRITES]
     handle          DW  ?                    ; Handle del archivo a leer
@@ -26,7 +26,7 @@
     buffBush        DB  262 DUP (?) ; Buffer para leer bytes de los arbustos
 
     ; [DATA GAMEPLAY]
-    tamUnidad           DW  10
+    tamUnidad           EQU  0008h
 
     jugadorBalaOffset   EQU 00h     ; sin offset la bala spawnea en la esquina del sprite del jugador en vez del centro
     tiempoDeDisparo     EQU 1       ; 10 frames entre disparo del jugador
@@ -38,11 +38,11 @@
     balaDataLen     EQU 0006h   ; cada bala en el array de balas tiene 6 bytes de informacion
 
     ; Informacion de cada pared en la escena [word x, word y, byte type (0=destruida)]
-    wallsData       DB  160 DUP (?) ; Matris de 16*1
-    wallsDataColLen EQU 16
-    wallsDataRowLen EQU 10
-    wallSizePixels  EQU 20
-    arrayParedesLen EQU 100
+    wallsData       DB  1000 DUP (?) ; Matris de 40*25
+    wallsDataColLen EQU 40
+    wallsDataRowLen EQU 25
+    wallSizePixels  EQU 8
+    arrayParedesLen EQU 1000
     paredDataLen    EQU 5
 
 .DATA_BUFF_PANTALLA segment
@@ -50,7 +50,7 @@
 .DATA_BUFF_PANTALLA ends
 
 .DATA_ARRAY_PAREDES segment
-arrayParedes    DB  500 DUP (0)   ; Un array con capacidad para 2800 paredes
+    arrayParedes    DB  5000 DUP (0)   ; Un array con capacidad para 2800 paredes
 .DATA_ARRAY_PAREDES ends
 
 .CODE
@@ -101,7 +101,7 @@ vSync PROC
     ret
 vSync ENDP
 
-cargarObjeto PROC   ; DS:.DATA_SPRITES | DI = filename, SI = buffer'
+cargarObjeto PROC   ; DI = filename, SI = buffer'
     ;---------------------------------
     ; Abrir archivo
     ;---------------------------------
@@ -140,7 +140,7 @@ cargarObjeto PROC   ; DS:.DATA_SPRITES | DI = filename, SI = buffer'
 
 cargarObjeto ENDP
 
-dibujarObjeto PROC ; SI = buffer
+dibujarObjeto PROC  ; SI = buffer
     ;--------------;
     ; Cargar datos ;
     ;--------------;
@@ -243,12 +243,15 @@ procesarInput PROC
         mov AL, 0
         mov [SI + 4], AL        ; dir=0 -> arriba
 
-        mov AX, [SI + 2]
+        sub [SI + 2], tamUnidad
 
-        call calcColisionConPared
+        call calcColisionPared  ; devuelve bool AX = hayColision
 
-        sub AX, tamUnidad
-        mov [SI + 2], AX
+        cmp AX, 0
+        je  .return     ; if no hubo colision
+
+        add [SI + 2], tamUnidad     ; Si sí hubo colision devolver al tanque
+
         jmp .return
 
     .inputTeclaDerecha:
@@ -257,9 +260,14 @@ procesarInput PROC
         mov AL, 1
         mov [SI + 4], AL        ; dir=1 -> derecha
 
-        mov AX, [SI]
-        add AX, tamUnidad
-        mov [SI], AX
+        add [SI], tamUnidad
+        
+        call calcColisionPared  ; devuelve bool AX = hayColision
+
+        cmp AX, 0
+        je  .return     ; if no hubo colision
+
+        sub [SI], tamUnidad     ; Si sí hubo colision devolver al tanque
         jmp .return
         
     .inputTeclaAbajo:
@@ -268,9 +276,14 @@ procesarInput PROC
         mov AL, 2
         mov [SI + 4], AL        ; dir=2 -> abajo
         
-        mov AX, [SI + 2]
-        add AX, tamUnidad
-        mov [SI + 2], AX
+        add [SI + 2], tamUnidad
+        
+        call calcColisionPared  ; devuelve bool AX = hayColision
+
+        cmp AX, 0
+        je  .return     ; if no hubo colision
+
+        sub [SI + 2], tamUnidad     ; Si sí hubo colision devolver al tanque
         jmp .return
 
     .inputTeclaIzquierda:
@@ -279,9 +292,14 @@ procesarInput PROC
         mov AL, 3
         mov [SI + 4], AL        ; dir=3 -> izquierda
         
-        mov AX, [SI]
-        sub AX, tamUnidad
-        mov [SI], AX
+        sub [SI], tamUnidad
+                
+        call calcColisionPared  ; devuelve bool AX = hayColision
+
+        cmp AX, 0
+        je  .return     ; if no hubo colision
+
+        add [SI], tamUnidad     ; Si sí hubo colision devolver al tanque
         jmp .return
     
     .inputTeclaDisparar:
@@ -450,13 +468,13 @@ dibujarBalas ENDP
 dibujarParedes PROC
     mov x, 0
     mov y, 0
+    xor CX, CX      ; columnasCount = 0
 
     lea DI, wallsData
 
-    mov BX, -1
+    mov BX, 0       ; i = 0
     dibujarParedes_forPared:
-        inc BX
-        cmp BX, wallsDataRowLen * wallsDataColLen
+        cmp BX, wallsDataRowLen * wallsDataColLen   ; if (i > filas * columnas) break
         jge end_dibujarParedes_forPared
 
         mov AL, [DI + BX]   ; AL = pared.type
@@ -494,6 +512,7 @@ dibujarParedes PROC
 
             push DI
             push BX
+            push CX
             push x
             push y
 
@@ -501,37 +520,133 @@ dibujarParedes PROC
 
             pop y
             pop x
+            pop CX
             pop BX
             pop DI
 
     
         dibujarParedes_continue:
-            push BX
+            inc CX          ; columnasCount++
+            inc BX          ; i++
 
-            add x, wallSizePixels
+            add x, wallSizePixels   ; coords de la siguiente pared
 
-            xor DX, DX
-            mov AX, x
-            mov BX, wallsDataColLen * wallSizePixels
-            div BX                      ; x / (wallsDataColLen (16) * 20 pixels)
+            cmp CX, wallsDataColLen
+            jl  dibujarParedes_forPared      ; if columnasCount < totalColumnas
 
-            pop BX
-            cmp DX, 0
-            jne dibujarParedes_forPared
-
-            mov x, 0
-            add y, wallSizePixels
+            xor CX, CX              ; columnasCount = 0
+            mov x, 0                ; siguiente columna empieza en x = 0
+            add y, wallSizePixels   ; siguiente fila
 
             jmp dibujarParedes_forPared
-
     end_dibujarParedes_forPared:
 
     ret
 dibujarParedes ENDP
 
-calcColisionConPared PROC   ; SI = buffer objeto
-    ret
-calcColisionConPared ENDP
+calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision)
+    ;-------------------------;
+    ; Inicializacion de datos ;
+    ;-------------------------;
+    xor CX, CX              ; CX lleva la cuenta de columnas
+    mov x, 0
+    mov y, 0
+    lea DI, wallsData
+    xor DX, DX
+    mov DL, [SI + 5]        ; DX = sprite.Size
+
+    ;---------------------------------;
+    ; Colision con bordes de pantalla ;
+    ;---------------------------------;
+    mov AX, [SI]    ; AX = extremo izquierdo del sprite
+
+    cmp AX, 0
+    jl  calcColisionPared_hayColision       ; if obj.posX < 0 esta fuera del borde
+
+    add AX, DX      ; AX = extremo derecho del sprite
+
+    cmp AX, pantallaX
+    jg  calcColisionPared_hayColision       ; if obj.posX > 320 esta fuera del borde
+
+    mov AX, [SI + 2]    ; AX = extremo superior del sprite
+
+    cmp AX, 0
+    jl  calcColisionPared_hayColision       ; if obj.posY < 0 esta fuera del borde
+
+    add AX, DX      ; AX = extremo inferior del sprite
+
+    cmp AX, pantallaY
+    jg  calcColisionPared_hayColision       ; if obj.posY > 200 esta fuera del borde
+
+
+
+    ;-----------------------;
+    ; Iterar por cada pared ;
+    ;-----------------------;
+    mov BX, 0                   ; i = 0
+    calcColisionPared_forPared:
+        cmp BX, wallsDataRowLen * wallsDataColLen   ; if (i > filas * columnas) break
+        jge end_calcColisionPared_forPared
+
+        mov AL, [DI + BX]       ; AL = wall.Type
+
+        cmp AL, 0
+        je  calcColisionPared_continue       ; if pared destruida o no existe
+        cmp AL, 3
+        je  calcColisionPared_continue       ; if pared es de tipo arbusto no tiene colision
+    
+        ;--------------------------;
+        ; Calcular si hay colision ;
+        ;--------------------------;
+        mov AX, [SI]            ; AX = obj.posX
+
+        add x, wallSizePixels
+        cmp AX, x
+        jg  calcColisionPared_continue       ; Si el objeto está más a la derecha que la pared no hay colision
+
+        add AX, DX              ; AX = extremo derecho del sprite
+        sub x, wallSizePixels
+        cmp AX, x
+        jl  calcColisionPared_continue       ; Si el objeto está más a la izquierda que la pared no hay colision
+
+        mov AX, [SI + 2]        ; AX = obj.posY
+        add y, wallSizePixels
+        cmp AX, y
+        jg  calcColisionPared_continue       ; Si el objeto está más abajo que la pared no hay colision
+
+        add AX, DX              ; AX = extremo inferior del sprite
+        sub y, wallSizePixels
+        cmp AX, y
+        jl  calcColisionPared_continue       ; Si el objeto está más a arriba que la pared no hay colision
+
+        ;------------------;
+        ; Sí hay colision! ;
+        ;------------------;
+        jmp calcColisionPared_hayColision
+
+        calcColisionPared_continue:
+            inc CX      ; columnasCount++
+            inc BX      ; i++
+
+            add x, wallSizePixels   ; coords de la siguiente pared
+
+            cmp CX, wallsDataColLen
+            jl  calcColisionPared_forPared      ; if columnasCount < totalColumnas
+
+            xor CX, CX              ; columnasCount = 0
+            mov x, 0                ; siguiente columna empieza en x = 0
+            add y, wallSizePixels   ; siguiente fila
+
+            jmp calcColisionPared_forPared
+
+    end_calcColisionPared_forPared:
+    mov AX, 0
+    ret                     ; return False
+
+    calcColisionPared_hayColision:
+    mov AX, 1
+    ret                     ; return True
+calcColisionPared ENDP
 
 main PROC
     mov AX, @data
