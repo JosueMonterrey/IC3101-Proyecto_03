@@ -19,11 +19,11 @@
     spriteBush      DB  '..\BUSH.BIN', 0
 
     ; [word x, word y, byte dir, byte size, byte[256] colors]
-    buffJugador     DB  262 DUP (?) ; Buffer para leer bytes del jugador
-    buffBala        DB  32  DUP (?) ; Buffer para leer bytes de la bala
-    buffBrick       DB  262 DUP (?) ; Buffer para leer bytes de los ladrillos
-    buffSteel       DB  262 DUP (?) ; Buffer para leer bytes del metal
-    buffBush        DB  262 DUP (?) ; Buffer para leer bytes de los arbustos
+    buffJugador     DB  1030    DUP (?) ; Buffer para leer bytes del jugador
+    buffBala        DB  32      DUP (?) ; Buffer para leer bytes de la bala
+    buffBrick       DB  262     DUP (?) ; Buffer para leer bytes de los ladrillos
+    buffSteel       DB  262     DUP (?) ; Buffer para leer bytes del metal
+    buffBush        DB  262     DUP (?) ; Buffer para leer bytes de los arbustos
 
     ; [DATA GAMEPLAY]
     tamUnidad           EQU  0008h
@@ -48,10 +48,6 @@
 .DATA_BUFF_PANTALLA segment
     buffPantalla            DB  64000 DUP (0)
 .DATA_BUFF_PANTALLA ends
-
-.DATA_ARRAY_PAREDES segment
-    arrayParedes    DB  5000 DUP (0)   ; Un array con capacidad para 2800 paredes
-.DATA_ARRAY_PAREDES ends
 
 .CODE
 dibujarPantalla PROC
@@ -117,7 +113,7 @@ cargarObjeto PROC   ; DI = filename, SI = buffer'
     ;---------------------------------
     mov AH, 3Fh          ; Función: Leer archivo
     mov BX, handle
-    mov CX, 1024          ; Leer hasta 1024 bytes
+    mov CX, 1030          ; Leer hasta 1030 bytes
     mov DX, SI
     int 21h
     jc  error_read
@@ -153,8 +149,26 @@ dibujarObjeto PROC  ; SI = buffer
     xor BX, BX
     mov BL, [SI + 5]        ; BX = columnas
     mov DX, BX              ; DX = filas
+    
+    ;------------------------------------;
+    ; Elejir sprite rotado correctamente ;
+    ;------------------------------------;
+    push BX
+    push DX
 
-    add SI, 6               ; SI apunta al array de pixeles
+    mov AX, BX              ; AX = columnas
+    mul DX                  ; AX = columnas * filas
+
+    xor BX, BX
+    mov BL, [SI + 4]        ; BL = obj.dir
+    mul BX                  ; AX = dir * columnas * filas
+
+    add SI, 6               ; compensar por los 6 bytes de datos al inicio del buffer
+    add SI, AX              ; avanzar AX pixeles hasta apuntar al inicio del sprite deseado
+    ; ahora SI apunta al array de pixeles
+
+    pop DX
+    pop BX
 
     ;------------------------;
     ; Preparar buff pantalla ;
@@ -367,33 +381,39 @@ dispararBala PROC   ; AX = posX, DX = posY, CH = dir, CL = disp, SI = spawnOffse
 dispararBala ENDP
 
 dibujarBalas PROC
-    mov CX, -1
+    ;-----------------------;
+    ; Inicializar variables ;
+    ;-----------------------;
+    lea DI, arrayBalas
+    lea SI, buffBala
+
+    ;----------------------------;
+    ; Iterar por todas las balas ;
+    ;----------------------------;
+    mov BX, 0                      ; balaIndex = -1
+
     dibujarBalas_forEach_bala:
-        inc CX                      ; balaIndex++
-
-        cmp CX, arrayBalasLen
-        jge dibujarBalas_return     ; si ya iteramos por todas la balas y no encontramos un espacio libre: return
-
-        mov AX, CX
-        mov BX, balaDataLen
-        mul BX
-        mov BX, AX                  ; offset bala
-
-        lea DI, arrayBalas
-        lea SI, buffBala
+        cmp BX, arrayBalasLen * balaDataLen
+        jge dibujarBalas_return     ; si ya iteramos por todas la balas
 
         mov AH, [DI + BX + 4]   ; AH = bala.dir
         mov AL, [DI + BX + 5]   ; AL = bala.desp
 
         cmp AH, 0Fh
-        je  dibujarBalas_forEach_bala           ; saltarse las balas desactivadas
+        je  dibujarBalas_continue           ; saltarse las balas desactivadas
         
+        ;---------------------------------;
+        ; Determinar direccion de la bala ;
+        ;---------------------------------;
         cmp AH, 0               ; dir=0 -> subir
         je  dibujarBalas_subir
+
         cmp AH, 1               ; dir=1 -> derecha
         je  dibujarBalas_derecha
+
         cmp AH, 2               ; dir=2 -> bajar
         je  dibujarBalas_bajar
+
         cmp AH, 3               ; dir=3 -> izquierda
         je  dibujarBalas_izquierda
 
@@ -422,44 +442,87 @@ dibujarBalas PROC
         jmp dibujarBalas_actualizarBuffer
 
 
+        ;--------------;
+        ; Dibujar bala ;
+        ;--------------;
         dibujarBalas_actualizarBuffer:
+        ;-------;
+        ; POS X ;
+        ;-------;
         mov AX, [DI + BX]       ; AX = bala.posX
         mov [SI], AX            ; buffBala.posX = bala.posX
 
-        mov AX, [DI + BX + 2]   ; AX = bala.posY
-        cmp AX, pantallaBorderSpace
-        jl  dibujarBalas_desactivarBala ; if (bala.posY < 10) desactivar.
+        ;-------;
+        ; POS Y ;
+        ;-------;
+        mov AX, [DI + BX + 2]       ; AX = bala.posY
+        mov [SI + 2], AX            ; buffBala.posY = bala.posY
 
-        mov DX, pantallaY
-        sub DX, pantallaBorderSpace
-        cmp AX, DX
-        jg  dibujarBalas_desactivarBala ; if (bala.posY > 200) desactivar.
+        
+        ;---------------------;
+        ; Calcular colisiones ;
+        ;---------------------;
+        push SI
+        push DI
+        push BX
+        
+        call calcColisionPared      ; AX = (bool) hayColision
+        mov DX, BX                  ; DX = wallIndex
 
-        mov AX, [DI + BX]   ; AX = bala.posX
-        cmp AX, pantallaBorderSpace
-        jl  dibujarBalas_desactivarBala ; if (bala.posX < 10) desactivar.
+        pop BX
+        pop DI
+        pop SI
 
-        mov DX, pantallaX
-        sub DX, pantallaBorderSpace
-        cmp AX, DX
-        jg  dibujarBalas_desactivarBala ; if (bala.posX > 320) desactivar.
+        cmp AX, 0
+        je  dibujarBalas_dibujar            ; no hubo colision
 
-        mov AX, [DI + BX]
-        mov [SI], AX            ; buffBala.posX = bala.posX
+        cmp AX, -1
+        je  dibujarBalas_desactivarBala     ; si colisiono con un borde
 
-        mov AX, [DI + BX + 2]
-        mov [SI + 2], AX        ; buffBala.posY = bala.posY
+        cmp AX, 1
+        je  dibujarBalas_colisionBrick     ; colision con wall.Type = 1 (brick)
 
-        push CX
+        jmp dibujarBalas_desactivarBala
+
+        dibujarBalas_colisionBrick:
+            push DI
+            push BX
+
+            lea DI, wallsData       ; array de paredes
+            mov BX, DX              ; BX = wallIndex
+            mov AL, 0
+            mov [DI + BX], AL        ; marcar pared en paredesArray[wallIndex] desactivada
+
+            pop BX
+            pop DI
+            jmp dibujarBalas_desactivarBala     ; desactivar bala
+
+        ;--------------;
+        ; Dibujar bala ;
+        ;--------------;
+        dibujarBalas_dibujar:
+        push SI
+        push DI
+        push BX
+
         call dibujarObjeto
-        pop CX
 
-        jmp dibujarBalas_forEach_bala
+        pop BX
+        pop DI
+        pop SI
 
+        jmp dibujarBalas_continue
+
+        
+        ;-----------------;
+        ; Desactivar bala ;
+        ;-----------------;
         dibujarBalas_desactivarBala:
         mov [DI + BX + 4], 0Fh
 
-    jmp dibujarBalas_forEach_bala
+        dibujarBalas_continue:
+        add BX, balaDataLen         ; balaIndex++
+        jmp dibujarBalas_forEach_bala
 
     dibujarBalas_return:
     ret
@@ -510,6 +573,7 @@ dibujarParedes PROC
             mov AX, y
             mov [SI + 2], AX
 
+            push SI
             push DI
             push BX
             push CX
@@ -523,6 +587,7 @@ dibujarParedes PROC
             pop CX
             pop BX
             pop DI
+            pop SI
 
     
         dibujarParedes_continue:
@@ -544,7 +609,7 @@ dibujarParedes PROC
     ret
 dibujarParedes ENDP
 
-calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision)
+calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision / int wall.Type), out BX (int wallIndex)
     ;-------------------------;
     ; Inicializacion de datos ;
     ;-------------------------;
@@ -561,23 +626,22 @@ calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision)
     mov AX, [SI]    ; AX = extremo izquierdo del sprite
 
     cmp AX, 0
-    jl  calcColisionPared_hayColision       ; if obj.posX < 0 esta fuera del borde
+    jl  calcColisionPared_hayBorder       ; if obj.posX < 0 esta fuera del borde
 
     add AX, DX      ; AX = extremo derecho del sprite
 
     cmp AX, pantallaX
-    jg  calcColisionPared_hayColision       ; if obj.posX > 320 esta fuera del borde
+    jg  calcColisionPared_hayBorder       ; if obj.posX > 320 esta fuera del borde
 
     mov AX, [SI + 2]    ; AX = extremo superior del sprite
 
     cmp AX, 0
-    jl  calcColisionPared_hayColision       ; if obj.posY < 0 esta fuera del borde
+    jl  calcColisionPared_hayBorder       ; if obj.posY < 0 esta fuera del borde
 
     add AX, DX      ; AX = extremo inferior del sprite
 
     cmp AX, pantallaY
-    jg  calcColisionPared_hayColision       ; if obj.posY > 200 esta fuera del borde
-
+    jg  calcColisionPared_hayBorder       ; if obj.posY > 200 esta fuera del borde
 
 
     ;-----------------------;
@@ -598,31 +662,42 @@ calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision)
         ;--------------------------;
         ; Calcular si hay colision ;
         ;--------------------------;
-        mov AX, [SI]            ; AX = obj.posX
+        mov DX, x
+        add DX, wallSizePixels - 1
 
-        add x, wallSizePixels
-        cmp AX, x
+        mov AX, [SI]            ; AX = obj.posX
+        cmp AX, DX
         jg  calcColisionPared_continue       ; Si el objeto está más a la derecha que la pared no hay colision
 
+        xor DX, DX
+        mov DL, [SI + 5]        ; DX = sprite.Size
         add AX, DX              ; AX = extremo derecho del sprite
-        sub x, wallSizePixels
+        dec AX
+
         cmp AX, x
         jl  calcColisionPared_continue       ; Si el objeto está más a la izquierda que la pared no hay colision
 
+        mov DX, y
+        add DX, wallSizePixels - 1
+
         mov AX, [SI + 2]        ; AX = obj.posY
-        add y, wallSizePixels
-        cmp AX, y
+        cmp AX, DX
         jg  calcColisionPared_continue       ; Si el objeto está más abajo que la pared no hay colision
 
+        xor DX, DX
+        mov DL, [SI + 5]        ; DX = sprite.Size
         add AX, DX              ; AX = extremo inferior del sprite
-        sub y, wallSizePixels
+        dec AX
+
         cmp AX, y
         jl  calcColisionPared_continue       ; Si el objeto está más a arriba que la pared no hay colision
 
         ;------------------;
         ; Sí hay colision! ;
         ;------------------;
-        jmp calcColisionPared_hayColision
+        xor AX, AX
+        mov AL, [DI + BX]
+        ret                     ; return True (wall.Type)
 
         calcColisionPared_continue:
             inc CX      ; columnasCount++
@@ -643,9 +718,10 @@ calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision)
     mov AX, 0
     ret                     ; return False
 
-    calcColisionPared_hayColision:
-    mov AX, 1
-    ret                     ; return True
+    calcColisionPared_hayBorder:
+    mov AX, -1
+    ret                     ; return -1
+
 calcColisionPared ENDP
 
 main PROC
@@ -698,10 +774,10 @@ main PROC
 
         lea SI, buffJugador
         call dibujarObjeto
+        call dibujarParedes
 
         call dibujarBalas
 
-        call dibujarParedes
 
         call calcDisparoCoolDown
     
