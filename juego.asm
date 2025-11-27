@@ -17,15 +17,19 @@
     spriteBrick     DB  '..\BRICK.BIN', 0
     spriteSteel     DB  '..\STEEL.BIN', 0
     spriteBush      DB  '..\BUSH.BIN', 0
+    spriteEnemigo1  DB  '..\ENEMY1.BIN', 0
 
     ; [word x, word y, byte dir, byte size, byte[256] colors]
     buffJugador     DB  1030    DUP (?) ; Buffer para leer bytes del jugador
+    buffEnemigo1    DB  1030    DUP (?) ; Buffer para leer bytes del enemigo1
     buffBala        DB  32      DUP (?) ; Buffer para leer bytes de la bala
     buffBrick       DB  262     DUP (?) ; Buffer para leer bytes de los ladrillos
     buffSteel       DB  262     DUP (?) ; Buffer para leer bytes del metal
     buffBush        DB  262     DUP (?) ; Buffer para leer bytes de los arbustos
 
     ; [DATA GAMEPLAY]
+    frameCounter        DW  0000h
+    fps                 DB  30
     tamUnidad           EQU  0008h
 
     jugadorBalaOffset   EQU 00h     ; sin offset la bala spawnea en la esquina del sprite del jugador en vez del centro
@@ -44,6 +48,14 @@
     wallSizePixels  EQU 8
     arrayParedesLen EQU 1000
     paredDataLen    EQU 5
+
+    enemigoSpawnX       EQU 150     ; posX del spawn de los enemigos
+    enemigoSpawnY       EQU 16      ; posY del spawn de los enemigos
+    tiempoEnemigoSpawn  EQU 10      ; segundos entre cada intento de spawn
+    maxEnemigosVivos    EQU 5       ; cuantos enemigos pueden existir al mismo tiempo en un nivel
+    enemigosEnNivel     EQU 20      ; cuantos enemigos en total hay que matar para pasar el nivel
+    enemigosVivos       DB  0       ; cuantos enemigos hay vivos en este momento
+
 
 .DATA_BUFF_PANTALLA segment
     buffPantalla            DB  64000 DUP (0)
@@ -97,7 +109,7 @@ vSync PROC
     ret
 vSync ENDP
 
-cargarObjeto PROC   ; DI = filename, SI = buffer'
+cargarObjeto PROC   ; DI = filename, SI = buffer
     ;---------------------------------
     ; Abrir archivo
     ;---------------------------------
@@ -739,6 +751,10 @@ main PROC
     lea SI, buffJugador
     call cargarObjeto
 
+    lea DI, spriteEnemigo1
+    lea SI, buffEnemigo1
+    call cargarObjeto
+
     lea DI, spriteBala
     lea SI, buffBala
     call cargarObjeto
@@ -764,23 +780,41 @@ main PROC
     ; JUEGO ;
     ;-------;
     main_loop:
+        inc frameCounter
+
+        ;---------------------;
+        ; DIBUJAR EN PANTALLA ;
+        ;---------------------;
         call vSync
         call dibujarPantalla
         ; call updateGUI
-
         call limpiarPantalla
 
+        ;-----;
+        ; I/O ;
+        ;-----;
         call procesarInput
+        call calcDisparoCoolDown
 
+        ;----------;
+        ; GAMEPLAY ;
+        ;----------;
         lea SI, buffJugador
         call dibujarObjeto
+
         call dibujarParedes
 
         call dibujarBalas
 
+        ;----------------------------;
+        ; PROCESOS UNA VEZ POR FRAME ;
+        ;----------------------------;
+        xor AX, AX
+        mov AL, fps
+        cmp frameCounter, AX
+        jl  main_loop
+        mov frameCounter, 0
 
-        call calcDisparoCoolDown
-    
     jmp main_loop
     game_over:
 
