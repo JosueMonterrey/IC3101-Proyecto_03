@@ -29,7 +29,7 @@
 
     ; [DATA GAMEPLAY]
     frameCounter        DW  0000h
-    fps                 DB  30
+    fps                 EQU  30
     tamUnidad           EQU  0008h
 
     jugadorBalaOffset   EQU 00h     ; sin offset la bala spawnea en la esquina del sprite del jugador en vez del centro
@@ -51,11 +51,16 @@
 
     enemigoSpawnX       EQU 150     ; posX del spawn de los enemigos
     enemigoSpawnY       EQU 16      ; posY del spawn de los enemigos
-    tiempoEnemigoSpawn  EQU 10      ; segundos entre cada intento de spawn
+    tiempoEnemigoSpawn  EQU 2      ; segundos entre cada intento de spawn
+    tiempoSpawnActual   DW  0       ; timer para spawnear un enemigo
     maxEnemigosVivos    EQU 5       ; cuantos enemigos pueden existir al mismo tiempo en un nivel
     enemigosEnNivel     EQU 20      ; cuantos enemigos en total hay que matar para pasar el nivel
     enemigosVivos       DB  0       ; cuantos enemigos hay vivos en este momento
-
+    ; Informacion de cada enemigo en la escena [posX (WORD), posY (WORD), direccion (BYTE), tipo (BYTE, 0=muerto), vidas (BYTE), disparoCooldown (WORD)]
+    arrayEnemigos       DB  45
+    enemigoDataLen      EQU 9       ; cada enemigo utiliza 8 bytes de informacion en el array de enemigos
+    arrayEnemigosLen    EQU 5       ; hay maximo 5 enemigos en el array
+    cooldownEnemigo1    EQU 2       ; cooldown para el disparo de los enemigos de tipo 1
 
 .DATA_BUFF_PANTALLA segment
     buffPantalla            DB  64000 DUP (0)
@@ -478,6 +483,42 @@ dibujarBalas PROC
         push DI
         push BX
         
+        call calcColisionEnemigo        ; AX = (bool) hayColision
+        mov DX, BX                      ; DX = enemigoIndex
+
+        pop BX
+        pop DI
+        pop SI
+
+        cmp AX, 0
+        je  dibujarBalas_checkColisionParedes  ; no hubo colision con ningun enemigo, checkear si hay colision con las paredes
+
+        push DI
+        push BX
+
+        lea DI, arrayEnemigos
+        mov BX, DX
+
+        mov AL, [DI + BX + 6]
+        dec AL
+        mov [DI + BX + 6], AL
+
+        cmp AL, 0
+        jg  dibujarBalas_foreach_bala_disparoNoMatoEnemigo
+
+        dec enemigosVivos
+
+        dibujarBalas_foreach_bala_disparoNoMatoEnemigo:
+        pop BX
+        pop DI
+        jmp dibujarBalas_desactivarBala
+
+
+        dibujarBalas_checkColisionParedes:
+        push SI
+        push DI
+        push BX
+        
         call calcColisionPared      ; AX = (bool) hayColision
         mov DX, BX                  ; DX = wallIndex
 
@@ -486,7 +527,7 @@ dibujarBalas PROC
         pop SI
 
         cmp AX, 0
-        je  dibujarBalas_dibujar            ; no hubo colision
+        je  dibujarBalas_dibujar  ; no hubo colision con las paredes entonces dibujar la bala
 
         cmp AX, -1
         je  dibujarBalas_desactivarBala     ; si colisiono con un borde
@@ -736,6 +777,160 @@ calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision / int wa
 
 calcColisionPared ENDP
 
+calcColisionEnemigo PROC   ; SI = buffer objeto, out AX (bool hayColision), out BX (int enemigoIndex)
+    lea DI, buffEnemigo1
+    xor CX, CX
+    mov CL, [DI + 5]            ; CX = enemigo.Size (todos los enemigos son del mismo tamaño entonces no importa cual buffer usamos)
+
+    lea DI, arrayEnemigos
+    mov BX, -enemigoDataLen
+    calcColisionEnemigo_siguienteEnemigo:
+        add BX, enemigoDataLen
+
+        cmp BX, enemigoDataLen * arrayEnemigosLen
+        jge calcColisionEnemigo_return                  ; si ya iteramos por todos los enemigos
+
+        mov AL, [DI + BX + 6]
+        cmp AL, 0
+        je  calcColisionEnemigo_siguienteEnemigo        ; si el enemigo esta muerto, no tiene colisiones obvio
+
+
+        ;-------------------;
+        ; COLISION EN EJE X ;
+        ;-------------------;
+        mov AX, [SI]            ; AX = objeto.posX
+        mov DX, [DI + BX]
+        add DX, CX              ; DX = extremo derecho del enemigo
+
+        cmp AX, DX
+        jg  calcColisionEnemigo_siguienteEnemigo        ; si el objeto está más a la derecha del enemigo no hay colisión
+
+        xor DX, DX
+        mov DL, [SI + 5]            ; DX = objeto.Size
+        add AX, DX                  ; AX = extremo derecho del objeto
+
+        mov DX, [DI + BX]           ; DX = extremo izquierdo del enemigo
+
+        cmp AX, DX
+        jl  calcColisionEnemigo_siguienteEnemigo        ; si el objeto está más a la izquierda del enemigo no hay colisión
+
+        
+        ;-------------------;
+        ; COLISION EN EJE Y ;
+        ;-------------------;
+        mov AX, [SI + 2]        ; AX = objeto.posY
+        mov DX, [DI + BX + 2]
+        add DX, CX              ; DX = extremo inferior del enemigo
+
+        cmp AX, DX
+        jg  calcColisionEnemigo_siguienteEnemigo        ; si el objeto está más abajo del enemigo no hay colisión
+
+        xor DX, DX
+        mov DL, [SI + 5]            ; DX = objeto.Size
+        add AX, DX                  ; AX = extremo inferior del objeto
+
+        mov DX, [DI + BX + 2]       ; DX = extremo superior del enemigo
+
+        cmp AX, DX
+        jl  calcColisionEnemigo_siguienteEnemigo        ; si el objeto está más arriba del enemigo no hay colisión
+
+
+        ;---------------;
+        ; HAY COLISION! ;
+        ;---------------;
+        mov AX, 1           ; hayColision = true
+        ret
+
+
+    calcColisionEnemigo_return:
+    mov AX, 0               ; hayColision = false
+    ret
+
+calcColisionEnemigo ENDP
+
+spawnearEnemigo PROC
+    ; timer de spawneo
+    inc tiempoSpawnActual
+    cmp tiempoSpawnActual, tiempoEnemigoSpawn
+    jl  spawnearEnemigo_return
+
+    ; resetar timer de spawneo
+    mov tiempoSpawnActual, 0
+
+    ; revisar si ya se llegó al límite de enemigos vivos al mismo tiempo
+    cmp enemigosVivos, maxEnemigosVivos
+    jge spawnearEnemigo_return
+
+    inc enemigosVivos
+
+    lea DI, arrayEnemigos
+    mov BX, -enemigoDataLen
+    spawnearEnemigo_siguienteEnemigo:
+        add BX, enemigoDataLen
+
+        cmp BX, enemigoDataLen * arrayEnemigosLen
+        ; si ya iteramos por todos los enemigos y no encontramos un espacio libre: return (ESTO NUNCA DEBERIA OCURRIR)
+        jge spawnearEnemigo_return
+
+        mov AL, [DI + BX + 6]
+        cmp AL, 0
+        jne spawnearEnemigo_siguienteEnemigo    ; si el enemigo en esta posicion no esta muerto seguir buscando un espacio
+
+        ; si llegamos a este punto es porque en esta posicion del array podemos spawnear un enemigo!
+
+        mov [DI + BX], enemigoSpawnX
+        mov [DI + BX + 2], enemigoSpawnY
+        mov [DI + BX + 4], 02h              ; dir = 2
+        mov [DI + BX + 5], 01h              ; tipo = 1
+        mov [DI + BX + 6], 01h              ; vidas = 1
+        mov [DI + BX + 7], cooldownEnemigo1
+
+    spawnearEnemigo_return:
+    ret
+spawnearEnemigo ENDP
+
+dibujarEnemigos PROC
+    lea DI, arrayEnemigos
+    lea SI, buffEnemigo1
+    
+    mov BX, -enemigoDataLen
+    dibujarEnemigos_siguienteEnemigo:
+        add BX, enemigoDataLen
+
+        cmp BX, enemigoDataLen * arrayEnemigosLen
+        jge dibujarEnemigos_return                  ; si ya iteramos por todos los enemigos
+
+        mov AL, [DI + BX + 6]
+        cmp AL, 0
+        je  dibujarEnemigos_siguienteEnemigo        ; si el enemigo esta muerto, no hay que dibujarlo
+
+        mov AX, [DI + BX]
+        inc AX
+        mov [SI], AX
+        mov [DI + BX], AX
+
+        mov AX, [DI + BX + 2]
+        mov [SI + 2], AX
+
+        mov AL, [DI + BX + 4]
+        mov [SI + 4], AL
+
+        push SI
+        push DI
+        push BX
+
+        call dibujarObjeto
+
+        pop BX
+        pop DI
+        pop SI
+
+        jmp dibujarEnemigos_siguienteEnemigo
+    dibujarEnemigos_return:
+
+    ret
+dibujarEnemigos ENDP
+
 main PROC
     mov AX, @data
     mov DS, AX
@@ -802,6 +997,8 @@ main PROC
         lea SI, buffJugador
         call dibujarObjeto
 
+        call dibujarEnemigos
+
         call dibujarParedes
 
         call dibujarBalas
@@ -809,12 +1006,11 @@ main PROC
         ;----------------------------;
         ; PROCESOS UNA VEZ POR FRAME ;
         ;----------------------------;
-        xor AX, AX
-        mov AL, fps
-        cmp frameCounter, AX
+        cmp frameCounter, fps
         jl  main_loop
         mov frameCounter, 0
 
+        call spawnearEnemigo
     jmp main_loop
     game_over:
 
