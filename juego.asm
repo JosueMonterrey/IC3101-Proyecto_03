@@ -36,10 +36,10 @@
     tiempoDeDisparo     EQU 1       ; 10 frames entre disparo del jugador
     disparoCoolDown     DB  0
 
-    ; Informacion de cada bala en la escena [posX (WORD), posY (WORD), direccion (BYTE), desplazamiento (BYTE)]
-    arrayBalas      DB  120 DUP (0Fh)
+    ; Informacion de cada bala en la escena [posX (WORD), posY (WORD), direccion (BYTE), desplazamiento (BYTE), idTirador (WORD)]
+    arrayBalas      DB  400 DUP (0Fh)
     arrayBalasLen   EQU 0014h   ; 50 en decimal (pueden haber maximo 50 balas en escena)
-    balaDataLen     EQU 0006h   ; cada bala en el array de balas tiene 6 bytes de informacion
+    balaDataLen     EQU 0008h   ; cada bala en el array de balas tiene 6 bytes de informacion
 
     ; Informacion de cada pared en la escena [word x, word y, byte type (0=destruida)]
     wallsData       DB  1000 DUP (?) ; Matris de 40*25
@@ -51,22 +51,33 @@
 
     enemigoSpawnX       EQU 150     ; posX del spawn de los enemigos
     enemigoSpawnY       EQU 16      ; posY del spawn de los enemigos
-    tiempoEnemigoSpawn  EQU 2      ; segundos entre cada intento de spawn
+    tiempoEnemigoSpawn  EQU 2       ; segundos entre cada intento de spawn
     tiempoSpawnActual   DW  0       ; timer para spawnear un enemigo
     maxEnemigosVivos    EQU 5       ; cuantos enemigos pueden existir al mismo tiempo en un nivel
     enemigosEnNivel     EQU 20      ; cuantos enemigos en total hay que matar para pasar el nivel
+    cantSpawneados      DB  0       ; cantidad de enemigos spawneados
     enemigosVivos       DB  0       ; cuantos enemigos hay vivos en este momento
-    ; Informacion de cada enemigo en la escena [posX (WORD), posY (WORD), direccion (BYTE), tipo (BYTE, 0=muerto), vidas (BYTE), disparoCooldown (WORD)]
-    arrayEnemigos       DB  45
-    enemigoDataLen      EQU 9       ; cada enemigo utiliza 8 bytes de informacion en el array de enemigos
+    ; Informacion de cada enemigo en la escena [posX (WORD), posY (WORD), direccion (BYTE), tipo (BYTE, 0=muerto), vidas (BYTE), velocidad(BYTE), disparoCooldown (WORD)]
+    arrayEnemigos       DB  50
+    enemigoDataLen      EQU 10       ; cada enemigo utiliza 8 bytes de informacion en el array de enemigos
     arrayEnemigosLen    EQU 5       ; hay maximo 5 enemigos en el array
-    cooldownEnemigo1    EQU 2       ; cooldown para el disparo de los enemigos de tipo 1
+    cooldownEnemigo1    EQU 50       ; cooldown para el disparo de los enemigos de tipo 1
+    cambioDirRandom     EQU 8       ; probabilidad x/256 de que un enemigo cambie aleatoriamente de direccion
 
 .DATA_BUFF_PANTALLA segment
     buffPantalla            DB  64000 DUP (0)
 .DATA_BUFF_PANTALLA ends
 
 .CODE
+byteAleatorio PROC  ; ret: AL = byte aleatorio
+    in AL, 40h       ; lee el contador del temporizador
+    mov AH, AL
+    in AL, 40h       ; léelo de nuevo (más mezcla)
+    xor AL, AH
+
+    ret
+byteAleatorio ENDP
+
 dibujarPantalla PROC
     mov AX, seg .DATA_BUFF_PANTALLA
     mov DS, AX
@@ -345,6 +356,7 @@ procesarInput PROC
         mov CH, [DI + 4]
         mov CL, 8
         mov SI, jugadorBalaOffset
+        mov BP, 0                       ; idTirador (0 = jugador)
         call dispararBala   ; AX = posX, DX = posY, CH = dir, CL = disp, SI = spawnOffset
         jmp .return
 
@@ -362,7 +374,7 @@ calcDisparoCoolDown PROC
     ret
 calcDisparoCoolDown ENDP
 
-dispararBala PROC   ; AX = posX, DX = posY, CH = dir, CL = disp, SI = spawnOffset
+dispararBala PROC   ; AX = posX, DX = posY, CH = dir, CL = disp, SI = spawnOffset, BP = idTirador
     ; la idea es iterar por todo el array de balas hasta encontrar un campo libre
     ; si no encuentra uno en porque ya hay 50 balas en pantalla (demasiadas)
     lea DI, arrayBalas
@@ -392,6 +404,9 @@ dispararBala PROC   ; AX = posX, DX = posY, CH = dir, CL = disp, SI = spawnOffse
 
         ; set desplazamiento
         mov [DI + BX + 5], CL
+
+        ; set idTirador
+        mov [DI + BX + 6], BP
     
     dispararBala_return:
     ret
@@ -493,6 +508,10 @@ dibujarBalas PROC
         cmp AX, 0
         je  dibujarBalas_checkColisionParedes  ; no hubo colision con ningun enemigo, checkear si hay colision con las paredes
 
+        mov AX, [DI + BX + 6]       ; AX = bala.idTirador
+        cmp AX, 1                   ; idTirador = 1 -> bala de enemigo. Una bala de enemigo no mata a otro enemigo entonces ignoramos la colision
+        je  dibujarBalas_checkColisionParedes
+
         push DI
         push BX
 
@@ -511,6 +530,7 @@ dibujarBalas PROC
         dibujarBalas_foreach_bala_disparoNoMatoEnemigo:
         pop BX
         pop DI
+        
         jmp dibujarBalas_desactivarBala
 
 
@@ -857,11 +877,16 @@ spawnearEnemigo PROC
     ; resetar timer de spawneo
     mov tiempoSpawnActual, 0
 
+    ; revisar si ya se spawnearon todos los enemigos del nivel
+    cmp cantSpawneados, enemigosEnNivel
+    jge spawnearEnemigo_return
+
     ; revisar si ya se llegó al límite de enemigos vivos al mismo tiempo
     cmp enemigosVivos, maxEnemigosVivos
     jge spawnearEnemigo_return
 
     inc enemigosVivos
+    inc cantSpawneados
 
     lea DI, arrayEnemigos
     mov BX, -enemigoDataLen
@@ -883,7 +908,8 @@ spawnearEnemigo PROC
         mov [DI + BX + 4], 02h              ; dir = 2
         mov [DI + BX + 5], 01h              ; tipo = 1
         mov [DI + BX + 6], 01h              ; vidas = 1
-        mov [DI + BX + 7], cooldownEnemigo1
+        mov [DI + BX + 7], 02h              ; velocidad = 1
+        mov [DI + BX + 8], cooldownEnemigo1
 
     spawnearEnemigo_return:
     ret
@@ -904,10 +930,11 @@ dibujarEnemigos PROC
         cmp AL, 0
         je  dibujarEnemigos_siguienteEnemigo        ; si el enemigo esta muerto, no hay que dibujarlo
 
+        ;-----------------;
+        ; DIBUJAR ENEMIGO ;
+        ;-----------------;
         mov AX, [DI + BX]
-        inc AX
         mov [SI], AX
-        mov [DI + BX], AX
 
         mov AX, [DI + BX + 2]
         mov [SI + 2], AX
@@ -925,9 +952,166 @@ dibujarEnemigos PROC
         pop DI
         pop SI
 
-        jmp dibujarEnemigos_siguienteEnemigo
-    dibujarEnemigos_return:
+        ;----------;
+        ; DISPARAR ;
+        ;----------;
+        mov AX, [DI + BX + 8]
+        dec AX
+        mov [DI + BX + 8], AX                   ; reducir cooldown
+        cmp AX, 0
+        ja  dibujarEnemigos_moverEnemigo        ; si el cooldown de disparo no ha terminado
 
+        mov [DI + BX + 8], cooldownEnemigo1     ; restaurar cooldown de disparo
+
+        push SI
+        push DI
+        push BX
+
+        mov AX, [DI + BX]       ; bala.posX = enemigo.posX
+        mov DX, [DI + BX + 2]   ; bala.posY = enemigo.posY
+        mov CH, [DI + BX + 4]   ; bala.dir = enemigo.dir 
+        mov CL, tamUnidad       ; bala.vel = tamUnidad
+        mov SI, 30              ; balaOffset
+        mov BP, 1               ; idTirador = 1 (enemigo)
+
+        call dispararBala
+
+        pop BX
+        pop DI
+        pop SI
+
+        dibujarEnemigos_moverEnemigo:
+        ;------------------;
+        ; MOVER EL ENEMIGO ;
+        ;------------------;
+        ; probabilidad random de cambiar de direccion
+        call byteAleatorio  ; AL = byte aleatorio
+
+        cmp AL, cambioDirRandom
+        jbe dibujarEnemigos_cambiarDireccion
+
+        mov AL, [DI + BX + 4]           ; AL = enemigo.dir
+
+        xor DX, DX
+        mov DL, [DI + BX + 7]           ; DX = enemigo.velocidad
+
+        cmp AL, 0
+        je  dibujarEnemigos_moverArriba         ; dir 0 = arriba
+
+        cmp AL, 1
+        je  dibujarEnemigos_moverDerecha        ; dir 1 = derecha
+
+        cmp AL, 2
+        je  dibujarEnemigos_moverAbajo          ; dir 2 = abajo
+
+        cmp AL, 3
+        je  dibujarEnemigos_moverIzquierda      ; dir 3 = izquierda
+
+        dibujarEnemigos_moverArriba:
+            sub [DI + BX + 2], DX           ; mover enemigo hacia arriba
+            sub [SI + 2], DX           ; mover enemigo hacia arriba
+            
+            push SI
+            push DI
+            push BX
+            push DX
+            
+            call calcColisionPared          ; AX = (bool) hayColision
+
+            pop DX
+            pop BX
+            pop DI
+            pop SI
+
+            cmp AX, 0
+            je  dibujarEnemigos_siguienteEnemigo        ; no hubo colision con ninguna pared
+
+            add [DI + BX + 2], DX        ; devolver al enemigo
+            add [SI + 2], DX        ; devolver al enemigo
+            jmp dibujarEnemigos_cambiarDireccion
+
+        dibujarEnemigos_moverDerecha:
+            add [DI + BX], DX           ; mover enemigo hacia la derecha
+            add [SI], DX           ; mover enemigo hacia la derecha
+            
+            push SI
+            push DI
+            push BX
+            push DX
+            
+            call calcColisionPared          ; AX = (bool) hayColision
+
+            pop DX
+            pop BX
+            pop DI
+            pop SI
+
+            cmp AX, 0
+            je  dibujarEnemigos_siguienteEnemigo        ; no hubo colision con ninguna pared
+
+            sub [DI + BX], DX            ; devolver al enemigo
+            sub [SI], DX            ; devolver al enemigo
+            jmp dibujarEnemigos_cambiarDireccion
+
+        dibujarEnemigos_moverAbajo:
+            add [DI + BX + 2], DX           ; mover enemigo hacia abajo
+            add [SI + 2], DX           ; mover enemigo hacia abajo
+            
+            push SI
+            push DI
+            push BX
+            push DX
+            
+            call calcColisionPared          ; AX = (bool) hayColision
+
+            pop DX
+            pop BX
+            pop DI
+            pop SI
+
+            cmp AX, 0
+            je  dibujarEnemigos_siguienteEnemigo        ; no hubo colision con ninguna pared
+
+            sub [DI + BX + 2], DX        ; devolver al enemigo
+            sub [SI + 2], DX        ; devolver al enemigo
+            jmp dibujarEnemigos_cambiarDireccion
+
+        dibujarEnemigos_moverIzquierda:
+            sub [DI + BX], DX           ; mover enemigo hacia la izquierda
+            sub [SI], DX           ; mover enemigo hacia la izquierda
+            
+            push SI
+            push DI
+            push BX
+            push DX
+            
+            call calcColisionPared          ; AX = (bool) hayColision
+
+            pop DX
+            pop BX
+            pop DI
+            pop SI
+
+            cmp AX, 0
+            je  dibujarEnemigos_siguienteEnemigo        ; no hubo colision con ninguna pared
+
+            add [DI + BX], DX            ; devolver al enemigo
+            add [SI], DX            ; devolver al enemigo
+            jmp dibujarEnemigos_cambiarDireccion
+        
+        dibujarEnemigos_cambiarDireccion:
+            push BX
+            call byteAleatorio      ; AL = random byte
+            xor DX, DX
+            mov BX, 4
+            div BX                  ; byteAleatorio / 4, DX = byteAleatorio % 4
+            pop BX
+
+            mov [DI + BX + 4], DL   ; asignar nueva direccion
+            jmp dibujarEnemigos_siguienteEnemigo
+
+
+    dibujarEnemigos_return:
     ret
 dibujarEnemigos ENDP
 
