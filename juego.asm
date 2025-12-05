@@ -17,6 +17,7 @@
     spriteBrick     DB  '..\BRICK.BIN', 0
     spriteSteel     DB  '..\STEEL.BIN', 0
     spriteBush      DB  '..\BUSH.BIN', 0
+    spriteWater     DB  '..\WATER.BIN', 0
     spriteEnemigo1  DB  '..\ENEMY1.BIN', 0
     spriteEnemigo2  DB  '..\ENEMY2.BIN', 0
     spriteEnemigo3  DB  '..\ENEMY3.BIN', 0
@@ -31,6 +32,7 @@
     buffBrick       DB  262     DUP (?) ; Buffer para leer bytes de los ladrillos
     buffSteel       DB  262     DUP (?) ; Buffer para leer bytes del metal
     buffBush        DB  262     DUP (?) ; Buffer para leer bytes de los arbustos
+    buffWater       DB  262     DUP (?) ; Buffer para leer bytes del agua
     buffEagle       DB  262     DUP (?) ; Buffer para leer bytes del aguila
 
     ; [DATA GAMEPLAY]
@@ -621,6 +623,9 @@ dibujarBalas PROC
         cmp AX, 0
         je  dibujarBalas_dibujar  ; no hubo colision con las paredes entonces dibujar la bala
 
+        cmp AX, 4
+        je  dibujarBalas_dibujar  ; 4 significa agua, no hay colisiones con el agua
+
         cmp AX, -1
         je  dibujarBalas_desactivarBala     ; si colisiono con un borde
 
@@ -681,6 +686,65 @@ dibujarBalas PROC
     ret
 dibujarBalas ENDP
 
+dibujarAgua PROC
+    mov x, 0
+    mov y, 0
+    xor CX, CX      ; columnasCount = 0
+
+    lea DI, wallsData
+    lea SI, buffWater
+
+    mov BX, 0       ; i = 0
+    dibujarAgua_forPared:
+        cmp BX, wallsDataRowLen * wallsDataColLen   ; if (i > filas * columnas) break
+        jge end_dibujarAgua_forPared
+
+        mov AL, [DI + BX]   ; AL = pared.type
+
+        cmp AL, 4
+        jne  dibujarAgua_continue       ; si no es agua continuar
+
+        mov AX, x
+        mov [SI], AX
+        mov AX, y
+        mov [SI + 2], AX
+
+        push SI
+        push DI
+        push BX
+        push CX
+        push x
+        push y
+
+        call dibujarObjeto
+
+        pop y
+        pop x
+        pop CX
+        pop BX
+        pop DI
+        pop SI
+
+
+        dibujarAgua_continue:
+            inc CX          ; columnasCount++
+            inc BX          ; i++
+
+            add x, wallSizePixels   ; coords de la siguiente pared
+
+            cmp CX, wallsDataColLen
+            jl  dibujarAgua_forPared      ; if columnasCount < totalColumnas
+
+            xor CX, CX              ; columnasCount = 0
+            mov x, 0                ; siguiente columna empieza en x = 0
+            add y, wallSizePixels   ; siguiente fila
+
+            jmp dibujarAgua_forPared
+    end_dibujarAgua_forPared:
+
+    ret
+dibujarAgua ENDP
+
 dibujarParedes PROC
     mov x, 0
     mov y, 0
@@ -697,6 +761,8 @@ dibujarParedes PROC
 
         cmp AL, 0                       ; 0 = no hay pared
         je  dibujarParedes_continue     ; continue
+        cmp AL, 4                       ; 4 = agua
+        je  dibujarParedes_continue     ; se tiene que renderizar aparte
 
         cmp AL, 1                       ; 1 = bricks
         je  dibujarParedes_Bricks
@@ -706,6 +772,7 @@ dibujarParedes PROC
 
         cmp AL, 3                       ; 3 = bush
         je  dibujarParedes_Bush
+
 
         dibujarParedes_Bricks:
             lea SI, buffBrick
@@ -718,7 +785,6 @@ dibujarParedes PROC
         dibujarParedes_Bush:
             lea SI, buffBush
             jmp dibujarParedes_dibujar
-        
 
         dibujarParedes_dibujar:
             mov AX, x
@@ -1392,6 +1458,10 @@ main PROC
     lea SI, buffBush
     call cargarObjeto
 
+    lea DI, spriteWater
+    lea SI, buffWater
+    call cargarObjeto
+
     lea DI, spriteEagle
     lea SI, buffEagle
     call cargarObjeto
@@ -1423,9 +1493,8 @@ main PROC
         ;----------;
         ; GAMEPLAY ;
         ;----------;
-        call dibujarParedes
-
-
+        call dibujarAgua
+        
         lea SI, buffJugador
         call dibujarObjeto
 
@@ -1435,6 +1504,8 @@ main PROC
 
         lea SI, buffEagle
         call dibujarObjeto
+
+        call dibujarParedes
 
         call detectarChoques
 
