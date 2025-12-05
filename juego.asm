@@ -18,6 +18,7 @@
     spriteSteel     DB  '..\STEEL.BIN', 0
     spriteBush      DB  '..\BUSH.BIN', 0
     spriteEnemigo1  DB  '..\ENEMY1.BIN', 0
+    spriteEagle     DB  '..\EAGLE.BIN', 0
 
     ; [word x, word y, byte dir, byte size, byte[256] colors]
     buffJugador     DB  1030    DUP (?) ; Buffer para leer bytes del jugador
@@ -26,6 +27,7 @@
     buffBrick       DB  262     DUP (?) ; Buffer para leer bytes de los ladrillos
     buffSteel       DB  262     DUP (?) ; Buffer para leer bytes del metal
     buffBush        DB  262     DUP (?) ; Buffer para leer bytes de los arbustos
+    buffEagle       DB  262     DUP (?) ; Buffer para leer bytes del aguila
 
     ; [DATA GAMEPLAY]
     frameCounter        DW  0000h
@@ -613,6 +615,9 @@ dibujarBalas PROC
         cmp AX, -1
         je  dibujarBalas_desactivarBala     ; si colisiono con un borde
 
+        cmp AX, -2
+        je  dibujarBalas_colisionEagle      ; si le dispararon al eagle
+
         cmp AX, 1
         je  dibujarBalas_colisionBrick     ; colision con wall.Type = 1 (brick)
 
@@ -630,6 +635,11 @@ dibujarBalas PROC
             pop BX
             pop DI
             jmp dibujarBalas_desactivarBala     ; desactivar bala
+
+        dibujarBalas_colisionEagle:
+            mov vidas, 0            ; game over
+            jmp dibujarBalas_desactivarBala
+
 
         ;--------------;
         ; Dibujar bala ;
@@ -744,13 +754,6 @@ dibujarParedes PROC
 dibujarParedes ENDP
 
 calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision / int wall.Type), out BX (int wallIndex)
-    ;-------------------------;
-    ; Inicializacion de datos ;
-    ;-------------------------;
-    xor CX, CX              ; CX lleva la cuenta de columnas
-    mov x, 0
-    mov y, 0
-    lea DI, wallsData
     xor DX, DX
     mov DL, [SI + 5]        ; DX = sprite.Size
 
@@ -777,6 +780,23 @@ calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision / int wa
     cmp AX, pantallaY
     jg  calcColisionPared_hayBorder       ; if obj.posY > 200 esta fuera del borde
 
+    ;-----------------------------------;
+    ; CALCULAR COLISIONES CON EL AGUILA ;
+    ;-----------------------------------;
+    call calcColisionAguila     ; AX (bool) = hayColision
+    cmp AX, 0
+    je calcColisionPared_iniciarCalculo     ; si no hubo colision con la eagle proseguir como normal
+    mov AX, -2                              ; else return -2
+    ret
+
+    calcColisionPared_iniciarCalculo:
+    ;-------------------------;
+    ; Inicializacion de datos ;
+    ;-------------------------;
+    xor CX, CX              ; CX lleva la cuenta de columnas
+    mov x, 0
+    mov y, 0
+    lea DI, wallsData
 
     ;-----------------------;
     ; Iterar por cada pared ;
@@ -928,6 +948,54 @@ calcColisionEnemigo PROC   ; SI = buffer objeto, out AX (bool hayColision), out 
     ret
 
 calcColisionEnemigo ENDP
+
+calcColisionAguila PROC     ; SI = buffer objeto, out AX (bool hayColision)
+
+    lea DI, buffEagle
+
+    xor CX, CX
+    mov CL, [DI + 5]            ; CX = eagle.size
+
+    mov AX, [DI]           ; AX = eagle.posX
+    xor DX, DX
+    mov DL, [SI + 5]            ; DX = objeto.size
+    add DX, [SI]                ; DX = objeto.posX + objeto.size
+
+    cmp AX, DX
+    jge calcColisionAguila_return      ; si la eagle está más a la derecha que el objeto no hay colisión
+
+    add AX, CX                  ; AX = eagle.posX + eagle.size
+    mov DX, [SI]                ; DX = objeto.posX
+
+    cmp AX, DX
+    jle calcColisionAguila_return      ; si la eagle está más a la izquierda que el objeto no hay colisión
+
+
+    mov AX, [DI + 2]           ; AX = eagle.posY
+    xor DX, DX
+    mov DL, [SI + 5]                ; DX = objeto.size
+    add DX, [SI + 2]                ; DX = objeto.posY + objeto.size
+
+    cmp AX, DX
+    jge calcColisionAguila_return      ; si la eagle está más abajo que el objeto no hay colisión
+
+    add AX, CX                  ; AX = eagle.posY + eagle.size
+    mov DX, [SI + 2]            ; DX = objeto.posY
+
+    cmp AX, DX
+    jle calcColisionAguila_return      ; si la eagle está más arriba que el objeto no hay colisión
+
+    ;-----------------;
+    ; SI HAY COLISION ;
+    ;-----------------;
+    mov AX, -2           ; return true
+    ret
+
+    calcColisionAguila_return:
+    mov AX, 0           ; return false
+    ret
+
+calcColisionAguila ENDP
 
 spawnearEnemigo PROC
     ; timer de spawneo
@@ -1232,6 +1300,10 @@ main PROC
     lea SI, buffBush
     call cargarObjeto
 
+    lea DI, spriteEagle
+    lea SI, buffEagle
+    call cargarObjeto
+
 
     ;-------;
     ; JUEGO ;
@@ -1259,14 +1331,18 @@ main PROC
         ;----------;
         ; GAMEPLAY ;
         ;----------;
+        call dibujarParedes
+
+
         lea SI, buffJugador
         call dibujarObjeto
 
         call dibujarEnemigos
 
-        call dibujarParedes
-
         call dibujarBalas
+
+        lea SI, buffEagle
+        call dibujarObjeto
 
         call detectarChoques
 
