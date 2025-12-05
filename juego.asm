@@ -32,9 +32,12 @@
     fps                 EQU  30
     tamUnidad           EQU  0008h
 
+    vidas               DB  3       ; el jugador tiene 3 vidas
     jugadorBalaOffset   EQU 00h     ; sin offset la bala spawnea en la esquina del sprite del jugador en vez del centro
     tiempoDeDisparo     EQU 1       ; 10 frames entre disparo del jugador
     disparoCoolDown     DB  0
+    jugadorSpawnX       EQU 0       ; posicion X del spawn del jugador
+    jugadorSpawnY       EQU 64       ; posicion Y del spawn del jugador
 
     ; Informacion de cada bala en la escena [posX (WORD), posY (WORD), direccion (BYTE), desplazamiento (BYTE), idTirador (WORD)]
     arrayBalas      DB  400 DUP (0Fh)
@@ -490,10 +493,71 @@ dibujarBalas PROC
         mov AX, [DI + BX + 2]       ; AX = bala.posY
         mov [SI + 2], AX            ; buffBala.posY = bala.posY
 
+        ;---------------------------------;
+        ; Calcular colisiones con jugador ;
+        ;---------------------------------;
+        mov AX, [DI + BX + 6]       ; AX = bala.idTirador
+        cmp AX, 0                   ; idTirador = 0 -> bala de jugador. Una bala del jugador no puede hacerle daño a él mismo entonces ignoramos la colision
+        je  dibujarBalas_checkColisionEnemigos
+
+        xor CX, CX
+        mov CL, [SI + 5]            ; CX = bala.size
+
+        push SI
+
+        lea SI, buffJugador
+
+        mov AX, [DI + BX]           ; AX = bala.posX
+        xor DX, DX
+        mov DL, [SI + 5]            ; DX = jugador.size
+        add DX, [SI]                ; DX = jugador.posX + jugador.size
+
+        cmp AX, DX
+        jge dibujarBalas_noColisionConJugador      ; si la bala está más a la derecha que el jugador no hay colisión
+
+        add AX, CX                  ; AX = bala.posX + bala.size
+        mov DX, [SI]                ; DX = jugador.posX
+
+        cmp AX, DX
+        jle dibujarBalas_noColisionConJugador      ; si la bala está más a la izquierda que el jugador no hay colisión
+
+
+        mov AX, [DI + BX + 2]           ; AX = bala.posY
+        xor DX, DX
+        mov DL, [SI + 5]                ; DX = jugador.size
+        add DX, [SI + 2]                ; DX = jugador.posY + jugador.size
+
+        cmp AX, DX
+        jge dibujarBalas_noColisionConJugador      ; si la bala está más abajo que el jugador no hay colisión
+
+        add AX, CX                  ; AX = bala.posY + bala.size
+        mov DX, [SI + 2]            ; DX = jugador.posY
+
+        cmp AX, DX
+        jle dibujarBalas_noColisionConJugador      ; si la bala está más arriba que el jugador no hay colisión
+
+        ;--------------------------------;
+        ; SI HAY COLISION CON EL JUGADOR ;
+        ;--------------------------------;
+        ; reposicionar jugador y quitar una vida
+        mov [SI], jugadorSpawnX
+        mov [SI + 2], jugadorSpawnY
+        dec vidas
+
+        pop SI
+        jmp dibujarBalas_desactivarBala
+
+        dibujarBalas_noColisionConJugador:
+        pop SI
+
+        ;----------------------------------;
+        ; Calcular colisiones con enemigos ;
+        ;----------------------------------;
+        dibujarBalas_checkColisionEnemigos:
+        mov AX, [DI + BX + 6]       ; AX = bala.idTirador
+        cmp AX, 1                   ; idTirador = 1 -> bala de enemigo. Una bala de enemigo no mata a otro enemigo entonces ignoramos la colision
+        je  dibujarBalas_checkColisionParedes
         
-        ;---------------------;
-        ; Calcular colisiones ;
-        ;---------------------;
         push SI
         push DI
         push BX
@@ -508,9 +572,6 @@ dibujarBalas PROC
         cmp AX, 0
         je  dibujarBalas_checkColisionParedes  ; no hubo colision con ningun enemigo, checkear si hay colision con las paredes
 
-        mov AX, [DI + BX + 6]       ; AX = bala.idTirador
-        cmp AX, 1                   ; idTirador = 1 -> bala de enemigo. Una bala de enemigo no mata a otro enemigo entonces ignoramos la colision
-        je  dibujarBalas_checkColisionParedes
 
         push DI
         push BX
@@ -1115,6 +1176,23 @@ dibujarEnemigos PROC
     ret
 dibujarEnemigos ENDP
 
+detectarChoques PROC
+    lea SI, buffJugador
+    call calcColisionEnemigo            ; revisar si el jugador choca fisicamente con un enemigo
+
+    cmp AX, 0
+    je detectarChoques_return           ; si no hubo colisiones solo retornar
+
+    ; si hubo un choque respawnear al jugador y quitar una vida
+    lea SI, buffJugador
+    mov [SI], jugadorSpawnX
+    mov [SI + 2], jugadorSpawnY
+    dec vidas
+
+    detectarChoques_return:
+    ret
+detectarChoques ENDP
+
 main PROC
     mov AX, @data
     mov DS, AX
@@ -1159,6 +1237,9 @@ main PROC
     ; JUEGO ;
     ;-------;
     main_loop:
+        cmp vidas, 0
+        jle game_over
+        
         inc frameCounter
 
         ;---------------------;
@@ -1186,6 +1267,8 @@ main PROC
         call dibujarParedes
 
         call dibujarBalas
+
+        call detectarChoques
 
         ;----------------------------;
         ; PROCESOS UNA VEZ POR FRAME ;
