@@ -18,11 +18,15 @@
     spriteSteel     DB  '..\STEEL.BIN', 0
     spriteBush      DB  '..\BUSH.BIN', 0
     spriteEnemigo1  DB  '..\ENEMY1.BIN', 0
+    spriteEnemigo2  DB  '..\ENEMY2.BIN', 0
+    spriteEnemigo3  DB  '..\ENEMY3.BIN', 0
     spriteEagle     DB  '..\EAGLE.BIN', 0
 
     ; [word x, word y, byte dir, byte size, byte[256] colors]
     buffJugador     DB  1030    DUP (?) ; Buffer para leer bytes del jugador
     buffEnemigo1    DB  1030    DUP (?) ; Buffer para leer bytes del enemigo1
+    buffEnemigo2    DB  1030    DUP (?) ; Buffer para leer bytes del enemigo2
+    buffEnemigo3    DB  1030    DUP (?) ; Buffer para leer bytes del enemigo3
     buffBala        DB  32      DUP (?) ; Buffer para leer bytes de la bala
     buffBrick       DB  262     DUP (?) ; Buffer para leer bytes de los ladrillos
     buffSteel       DB  262     DUP (?) ; Buffer para leer bytes del metal
@@ -66,7 +70,12 @@
     arrayEnemigos       DB  50
     enemigoDataLen      EQU 10       ; cada enemigo utiliza 8 bytes de informacion en el array de enemigos
     arrayEnemigosLen    EQU 5       ; hay maximo 5 enemigos en el array
-    cooldownEnemigo1    EQU 50       ; cooldown para el disparo de los enemigos de tipo 1
+    velocidadEnemigo1   EQU 1
+    velocidadEnemigo2   EQU 2
+    velocidadEnemigo3   EQU 1
+    cooldownEnemigo1    EQU 80       ; cooldown para el disparo de los enemigos de tipo 1
+    cooldownEnemigo2    EQU 40       ; cooldown para el disparo de los enemigos de tipo 2
+    cooldownEnemigo3    EQU 100       ; cooldown para el disparo de los enemigos de tipo 3
     cambioDirRandom     EQU 8       ; probabilidad x/256 de que un enemigo cambie aleatoriamente de direccion
 
 .DATA_BUFF_PANTALLA segment
@@ -1031,14 +1040,44 @@ spawnearEnemigo PROC
         jne spawnearEnemigo_siguienteEnemigo    ; si el enemigo en esta posicion no esta muerto seguir buscando un espacio
 
         ; si llegamos a este punto es porque en esta posicion del array podemos spawnear un enemigo!
-
         mov [DI + BX], enemigoSpawnX
         mov [DI + BX + 2], enemigoSpawnY
-        mov [DI + BX + 4], 02h              ; dir = 2
-        mov [DI + BX + 5], 01h              ; tipo = 1
-        mov [DI + BX + 6], 01h              ; vidas = 1
-        mov [DI + BX + 7], 02h              ; velocidad = 1
-        mov [DI + BX + 8], cooldownEnemigo1
+        mov [DI + BX + 4], 02h              ; dir = 2 -> abajo
+
+        call byteAleatorio  ; AL = byte aleatorio
+        mov AH, 0
+        xor DX, DX
+        mov CX, 3
+        div CX              ; AX = byteAleatorio / 3, DX = byteAleatorio % 3
+
+        cmp DX, 0
+        je  spawnearEnemigo_tipo1
+        cmp DX, 1
+        je  spawnearEnemigo_tipo2
+        cmp DX, 2
+        je  spawnearEnemigo_tipo3
+
+
+        spawnearEnemigo_tipo1:
+            mov [DI + BX + 5], 01h              ; tipo = 1
+            mov [DI + BX + 6], 01h              ; vidas = 1
+            mov [DI + BX + 7], velocidadEnemigo1
+            mov [DI + BX + 8], cooldownEnemigo1
+            jmp spawnearEnemigo_return
+
+        spawnearEnemigo_tipo2:
+            mov [DI + BX + 5], 02h              ; tipo = 2
+            mov [DI + BX + 6], 01h              ; vidas = 1
+            mov [DI + BX + 7], velocidadEnemigo2
+            mov [DI + BX + 8], cooldownEnemigo2
+            jmp spawnearEnemigo_return
+
+        spawnearEnemigo_tipo3:
+            mov [DI + BX + 5], 03h              ; tipo = 2
+            mov [DI + BX + 6], 03h              ; vidas = 1
+            mov [DI + BX + 7], velocidadEnemigo3
+            mov [DI + BX + 8], cooldownEnemigo3
+            jmp spawnearEnemigo_return
 
     spawnearEnemigo_return:
     ret
@@ -1046,7 +1085,6 @@ spawnearEnemigo ENDP
 
 dibujarEnemigos PROC
     lea DI, arrayEnemigos
-    lea SI, buffEnemigo1
     
     mov BX, -enemigoDataLen
     dibujarEnemigos_siguienteEnemigo:
@@ -1059,6 +1097,30 @@ dibujarEnemigos PROC
         cmp AL, 0
         je  dibujarEnemigos_siguienteEnemigo        ; si el enemigo esta muerto, no hay que dibujarlo
 
+        ;-----------------;
+        ; DETERMINAR TIPO ;
+        ;-----------------;
+        mov AL, [DI + BX + 5]           ; AL = enemigo.tipo
+
+        cmp AL, 1
+        je  dibujarEnemigos_cargarBuffEnemigo1      ; cargar el buffEnemigo1 si el tipo = 1
+        cmp AL, 2
+        je  dibujarEnemigos_cargarBuffEnemigo2      ; cargar el buffEnemigo1 si el tipo = 2
+        cmp AL, 3
+        je  dibujarEnemigos_cargarBuffEnemigo3      ; cargar el buffEnemigo1 si el tipo = 3
+
+        dibujarEnemigos_cargarBuffEnemigo1:
+        lea SI, buffEnemigo1
+        jmp dibujarEnemigos_dibujar
+        dibujarEnemigos_cargarBuffEnemigo2:
+        lea SI, buffEnemigo2
+        jmp dibujarEnemigos_dibujar
+        dibujarEnemigos_cargarBuffEnemigo3:
+        lea SI, buffEnemigo3
+        jmp dibujarEnemigos_dibujar
+
+
+        dibujarEnemigos_dibujar:
         ;-----------------;
         ; DIBUJAR ENEMIGO ;
         ;-----------------;
@@ -1090,8 +1152,30 @@ dibujarEnemigos PROC
         cmp AX, 0
         ja  dibujarEnemigos_moverEnemigo        ; si el cooldown de disparo no ha terminado
 
-        mov [DI + BX + 8], cooldownEnemigo1     ; restaurar cooldown de disparo
+        ;-----------------------------------------;
+        ; RESTAURAR COOLDOWN DEPENDIENDO DEL TIPO ;
+        ;-----------------------------------------;
+        mov AL, [DI + BX + 5]           ; AL = enemigo.tipo
 
+        cmp AL, 1
+        je  dibujarEnemigos_restaurarCooldownEnemigo1
+        cmp AL, 2
+        je  dibujarEnemigos_restaurarCooldownEnemigo2
+        cmp AL, 3
+        je  dibujarEnemigos_restaurarCooldownEnemigo2
+
+        dibujarEnemigos_restaurarCooldownEnemigo1:
+        mov [DI + BX + 8], cooldownEnemigo1     ; restaurar cooldown de disparo
+        jmp dibujarEnemigos_disparar
+        dibujarEnemigos_restaurarCooldownEnemigo2:
+        mov [DI + BX + 8], cooldownEnemigo2     ; restaurar cooldown de disparo
+        jmp dibujarEnemigos_disparar
+        dibujarEnemigos_restaurarCooldownEnemigo3:
+        mov [DI + BX + 8], cooldownEnemigo3     ; restaurar cooldown de disparo
+        jmp dibujarEnemigos_disparar
+
+
+        dibujarEnemigos_disparar:
         push SI
         push DI
         push BX
@@ -1278,6 +1362,14 @@ main PROC
 
     lea DI, spriteEnemigo1
     lea SI, buffEnemigo1
+    call cargarObjeto
+
+    lea DI, spriteEnemigo2
+    lea SI, buffEnemigo2
+    call cargarObjeto
+
+    lea DI, spriteEnemigo3
+    lea SI, buffEnemigo3
     call cargarObjeto
 
     lea DI, spriteBala
