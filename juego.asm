@@ -4,10 +4,15 @@
 .DATA
     ; [DATA GRAFICOS]
     pantallaX               EQU  320
-    pantallaY               EQU  200
+    pantallaY               EQU  192
     x                       DW  0
     y                       DW  0
     pantallaBorderSpace     EQU 0       ; cantidad de pixeles a los lados de los bordes para que los enemigos no se salgan de la pantalla
+
+    ; [GUI]
+    enemigosText    DB  "Enemigos: $"
+    vidasText       DB  " Vidas: $"
+    nivelText       DB  " Nivel: $"
 
     ; [DATA SPRITES]
     handle          DW  ?                    ; Handle del archivo a leer
@@ -34,18 +39,21 @@
     buffBush        DB  262     DUP (?) ; Buffer para leer bytes de los arbustos
     buffWater       DB  262     DUP (?) ; Buffer para leer bytes del agua
     buffEagle       DB  262     DUP (?) ; Buffer para leer bytes del aguila
+    buffTexto       DB 9 DUP (?)   ; buffer para leer bytes de texto
 
     ; [DATA GAMEPLAY]
     frameCounter        DW  0000h
     fps                 EQU  30
     tamUnidad           EQU  0008h
 
+    nivel               DB  0       ; cual nivel se está jugando
+
     vidas               DB  3       ; el jugador tiene 3 vidas
     jugadorBalaOffset   EQU 00h     ; sin offset la bala spawnea en la esquina del sprite del jugador en vez del centro
     tiempoDeDisparo     EQU 1       ; 10 frames entre disparo del jugador
     disparoCoolDown     DB  0
-    jugadorSpawnX       EQU 0       ; posicion X del spawn del jugador
-    jugadorSpawnY       EQU 64       ; posicion Y del spawn del jugador
+    jugadorSpawnX       EQU 152       ; posicion X del spawn del jugador
+    jugadorSpawnY       EQU 152       ; posicion Y del spawn del jugador
 
     ; Informacion de cada bala en la escena [posX (WORD), posY (WORD), direccion (BYTE), desplazamiento (BYTE), idTirador (WORD)]
     arrayBalas      DB  400 DUP (0Fh)
@@ -53,14 +61,14 @@
     balaDataLen     EQU 0008h   ; cada bala en el array de balas tiene 6 bytes de informacion
 
     ; Informacion de cada pared en la escena [word x, word y, byte type (0=destruida)]
-    wallsData       DB  1000 DUP (?) ; Matris de 40*25
+    arrayParedesLen EQU 960
+    wallsData       DB  arrayParedesLen DUP (?) ; Matris de 40*24
     wallsDataColLen EQU 40
-    wallsDataRowLen EQU 25
+    wallsDataRowLen EQU 24
     wallSizePixels  EQU 8
-    arrayParedesLen EQU 1000
     paredDataLen    EQU 5
 
-    enemigoSpawnX       EQU 150     ; posX del spawn de los enemigos
+    enemigoSpawnX       EQU 152     ; posX del spawn de los enemigos
     enemigoSpawnY       EQU 16      ; posY del spawn de los enemigos
     tiempoEnemigoSpawn  EQU 2       ; segundos entre cada intento de spawn
     tiempoSpawnActual   DW  0       ; timer para spawnear un enemigo
@@ -68,6 +76,7 @@
     enemigosEnNivel     EQU 20      ; cuantos enemigos en total hay que matar para pasar el nivel
     cantSpawneados      DB  0       ; cantidad de enemigos spawneados
     enemigosVivos       DB  0       ; cuantos enemigos hay vivos en este momento
+    kills               DB  0       ; kill counter
     ; Informacion de cada enemigo en la escena [posX (WORD), posY (WORD), direccion (BYTE), tipo (BYTE, 0=muerto), vidas (BYTE), velocidad(BYTE), disparoCooldown (WORD)]
     arrayEnemigos       DB  50
     enemigoDataLen      EQU 10       ; cada enemigo utiliza 8 bytes de informacion en el array de enemigos
@@ -106,7 +115,9 @@ dibujarPantalla PROC
     mov ES, AX
 
     xor DI, DI              ; destino = inicio de VRAM
+    add DI, 2560
     mov CX, 32000           ; 320*200 = 64000 bytes → 32000 palabras
+    sub CX, 1280
     rep movsw               ; copiar buffer (64 KB aprox)
     mov AX, @data
     mov DS, AX
@@ -600,6 +611,7 @@ dibujarBalas PROC
         jg  dibujarBalas_foreach_bala_disparoNoMatoEnemigo
 
         dec enemigosVivos
+        inc kills
 
         dibujarBalas_foreach_bala_disparoNoMatoEnemigo:
         pop BX
@@ -1411,6 +1423,69 @@ detectarChoques PROC
     ret
 detectarChoques ENDP
 
+updateGUI PROC
+    mov AH, 02
+    mov DL, 0Dh
+    int 21h             ; carriage return
+    ; mov DL, 0Ah
+    ; int 21h             ; line feed
+
+    mov AH, 09
+    lea DX, enemigosText
+    int 21h
+
+    xor AX, AX
+    mov AL, kills
+    call writeInt
+
+    mov AH, 2
+    mov DL, 2Fh
+    int 21h
+
+    xor AX, AX
+    mov AL, enemigosEnNivel
+    call writeInt
+
+    mov AH, 09
+    lea DX, vidasText
+    int 21h
+
+    xor AX, AX
+    mov AL, vidas
+    call writeInt
+
+    ret
+updateGUI ENDP
+
+writeInt PROC   ; AX = numero
+    lea SI, buffTexto
+    mov CX, 0       ; contador de digitos
+    writeInt_forEach_digito:
+        xor DX, DX
+        mov BX, 10
+        div BX      ; numero % 10 (obtener el ultimo digito)
+        
+        add DX, 30h ; sumar 30h para alinear al codigo ascii de los numeros
+
+        mov BX, CX
+        mov [SI + BX], DL   ; añadir numero al buffer de texto
+
+        inc CX              ; countDigitos++
+
+        cmp AX, 0
+        jne writeInt_forEach_digito ; si todavia quedan digitos continuar procesandolos
+
+    mov AH, 02h
+    writeInt_escribir:
+        mov BX, CX
+        dec BX
+        mov DL, [SI + BX]   ; obtener digito del buffer de texto
+        int 21h             ; imprimir digito
+    loop writeInt_escribir
+    ret
+
+writeInt ENDP
+
 main PROC
     mov AX, @data
     mov DS, AX
@@ -1466,11 +1541,11 @@ main PROC
     lea SI, buffEagle
     call cargarObjeto
 
-
     ;-------;
     ; JUEGO ;
     ;-------;
     main_loop:
+
         cmp vidas, 0
         jle game_over
         
@@ -1481,7 +1556,7 @@ main PROC
         ;---------------------;
         call vSync
         call dibujarPantalla
-        ; call updateGUI
+        call updateGUI
         call limpiarPantalla
 
         ;-----;
