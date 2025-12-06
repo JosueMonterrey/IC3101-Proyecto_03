@@ -60,6 +60,16 @@
     arrayBalasLen   EQU 0014h   ; 50 en decimal (pueden haber maximo 50 balas en escena)
     balaDataLen     EQU 0008h   ; cada bala en el array de balas tiene 6 bytes de informacion
 
+    ; Offsets en X y Y para cada dirección
+    offsetXDir0     EQU 6
+    offsetYDir0     EQU 0
+    offsetXDir1     EQU 10
+    offsetYDir1     EQU 6
+    offsetXDir2     EQU 6
+    offsetYDir2     EQU 10
+    offsetXDir3     EQU 0
+    offsetYDir3     EQU 6
+
     ; Informacion de cada pared en la escena [word x, word y, byte type (0=destruida)]
     arrayParedesLen EQU 960
     wallsData       DB  arrayParedesLen DUP (?) ; Matris de 40*24
@@ -401,7 +411,7 @@ calcDisparoCoolDown PROC
     ret
 calcDisparoCoolDown ENDP
 
-dispararBala PROC   ; AX = posX, DX = posY, CH = dir, CL = disp, SI = spawnOffset, BP = idTirador
+dispararBala PROC   ; AX = posX, DX = posY, CH = dir, CL = disp, BP = idTirador
     ; la idea es iterar por todo el array de balas hasta encontrar un campo libre
     ; si no encuentra uno en porque ya hay 50 balas en pantalla (demasiadas)
     lea DI, arrayBalas
@@ -418,10 +428,14 @@ dispararBala PROC   ; AX = posX, DX = posY, CH = dir, CL = disp, SI = spawnOffse
         pop AX
         jne  dispararBala_siguienteBala     ; if (espacio_en_uso) continue
 
-        add AX, SI
         mov [DI + BX], AX       ; arrayBalas[indexBala].posX = posX
-
         mov [DI + BX + 2], DX   ; arrayBalas[indexBala].posY = posY
+
+        ; set desplazamiento
+        mov [DI + BX + 5], CL
+
+        ; set idTirador
+        mov [DI + BX + 6], BP
 
         ; dir=0 -> sube,
         ; dir=1 -> derecha
@@ -429,11 +443,35 @@ dispararBala PROC   ; AX = posX, DX = posY, CH = dir, CL = disp, SI = spawnOffse
         ; dir=3 -> izquierda
         mov [DI + BX + 4], CH
 
-        ; set desplazamiento
-        mov [DI + BX + 5], CL
+        cmp CH, 0
+        je  dispararBala_offsetArriba
+        cmp CH, 1
+        je  dispararBala_offsetDerecha
+        cmp CH, 2
+        je  dispararBala_offsetAbajo
+        cmp CH, 3
+        je  dispararBala_offsetIzquierda
 
-        ; set idTirador
-        mov [DI + BX + 6], BP
+
+        dispararBala_offsetArriba:
+            add [DI + BX], offsetXDir0
+            add [DI + BX + 2], offsetYDir0
+            jmp dispararBala_return
+
+        dispararBala_offsetDerecha:
+            add [DI + BX], offsetXDir1
+            add [DI + BX + 2], offsetYDir1
+            jmp dispararBala_return
+
+        dispararBala_offsetAbajo:
+            add [DI + BX], offsetXDir2
+            add [DI + BX + 2], offsetYDir2
+            jmp dispararBala_return
+
+        dispararBala_offsetIzquierda:
+            add [DI + BX], offsetXDir3
+            add [DI + BX + 2], offsetYDir3
+            jmp dispararBala_return
     
     dispararBala_return:
     ret
