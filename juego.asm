@@ -13,6 +13,10 @@
     enemigosText    DB  "Enemigos: $"
     vidasText       DB  " Vidas: $"
     nivelText       DB  " Nivel: $"
+    emptyLineText   DB  0Dh, "                                        ", 0Dh, 0Ah, "$"
+    ggText          DB  "            JUEGO COMPLETADO!!!", 0Ah, 0Ah, 0Dh, "$"
+    gameOverText    DB  0Dh, "             GAME OVER :(", 0Dh, 0Ah, 0Ah, "$"
+    continuarText   DB  0Dh, 0Ah, 0Ah, 0Ah, 0Ah, "< Presione una tecla para continuar >", 0Dh, 0Ah, 0Ah, "$"
 
     ; [DATA SPRITES]
     handle          DW  ?                    ; Handle del archivo a leer
@@ -42,9 +46,10 @@
     buffTexto       DB 9 DUP (?)   ; buffer para leer bytes de texto
 
     ; [DATA GAMEPLAY]
+    gg                  DB  0       ; bool juegoCompletado? 1 = true : 0 = false
     frameCounter        DW  0000h
-    fps                 EQU  30
-    tamUnidad           EQU  0008h
+    fps                 EQU 30
+    tamUnidad           EQU 0008h
 
     nivel               DB  0       ; cual nivel se está jugando
 
@@ -71,7 +76,7 @@
     offsetYDir3     EQU 6
 
     ; Informacion de cada pared en la escena [word x, word y, byte type (0=destruida)]
-    arrayParedesLen EQU 960
+    arrayParedesLen EQU 2880
     wallsData       DB  arrayParedesLen DUP (?) ; Matris de 40*24
     wallsDataColLen EQU 40
     wallsDataRowLen EQU 24
@@ -83,7 +88,7 @@
     tiempoEnemigoSpawn  EQU 2       ; segundos entre cada intento de spawn
     tiempoSpawnActual   DW  0       ; timer para spawnear un enemigo
     maxEnemigosVivos    EQU 5       ; cuantos enemigos pueden existir al mismo tiempo en un nivel
-    enemigosEnNivel     EQU 20      ; cuantos enemigos en total hay que matar para pasar el nivel
+    enemigosEnNivel     EQU 1      ; cuantos enemigos en total hay que matar para pasar el nivel
     cantSpawneados      DB  0       ; cantidad de enemigos spawneados
     enemigosVivos       DB  0       ; cuantos enemigos hay vivos en este momento
     kills               DB  0       ; kill counter
@@ -178,7 +183,7 @@ cargarObjeto PROC   ; DI = filename, SI = buffer
     ;---------------------------------
     mov AH, 3Fh          ; Función: Leer archivo
     mov BX, handle
-    mov CX, 1030          ; Leer hasta 1030 bytes
+    mov CX, 2880          ; Leer hasta 2880 bytes
     mov DX, SI
     int 21h
     jc  error_read
@@ -634,7 +639,9 @@ dibujarBalas PROC
         cmp AX, 0
         je  dibujarBalas_checkColisionParedes  ; no hubo colision con ningun enemigo, checkear si hay colision con las paredes
 
-
+        ;-----------------------------;
+        ; SI HAY COLISION CON ENEMIGO ;
+        ;-----------------------------;
         push DI
         push BX
 
@@ -651,6 +658,16 @@ dibujarBalas PROC
         dec enemigosVivos
         inc kills
 
+        cmp kills, enemigosEnNivel
+        jne dibujarBalas_foreach_bala_todaviaHayEnemigos
+
+        ;----------------;
+        ; LEVEL CLEARED! ;
+        ;----------------;
+        call nivelCompletado        ; si el jugador mató a todos los enemigos del nivel
+
+
+        dibujarBalas_foreach_bala_todaviaHayEnemigos:
         dibujarBalas_foreach_bala_disparoNoMatoEnemigo:
         pop BX
         pop DI
@@ -744,6 +761,12 @@ dibujarAgua PROC
     lea DI, wallsData
     lea SI, buffWater
 
+    xor AX, AX
+    mov AL, nivel
+    mov BX, wallsDataRowLen * wallsDataColLen
+    mul BX
+    add DI, AX
+
     mov BX, 0       ; i = 0
     dibujarAgua_forPared:
         cmp BX, wallsDataRowLen * wallsDataColLen   ; if (i > filas * columnas) break
@@ -801,6 +824,12 @@ dibujarParedes PROC
     xor CX, CX      ; columnasCount = 0
 
     lea DI, wallsData
+
+    xor AX, AX
+    mov AL, nivel
+    mov BX, wallsDataRowLen * wallsDataColLen
+    mul BX
+    add DI, AX
 
     mov BX, 0       ; i = 0
     dibujarParedes_forPared:
@@ -923,6 +952,12 @@ calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision / int wa
     mov y, 0
     lea DI, wallsData
 
+    xor AX, AX
+    mov AL, nivel
+    mov BX, wallsDataRowLen * wallsDataColLen
+    mul BX
+    add DI, AX
+
     ;-----------------------;
     ; Iterar por cada pared ;
     ;-----------------------;
@@ -975,7 +1010,21 @@ calcColisionPared PROC   ; SI = buffer objeto, out AX (bool hayColision / int wa
         ; Sí hay colision! ;
         ;------------------;
         xor AX, AX
-        mov AL, [DI + BX]
+        mov AL, [DI + BX]           ; AX = walls[wallIndex].type
+
+        push AX
+        push BX
+        
+        xor AX, AX
+        mov AL, nivel
+        mov BX, wallsDataRowLen * wallsDataColLen
+        mul BX
+
+        pop BX
+
+        add BX, AX              ; le sumamos al wallIndex el offset del nivel actual (+960 * nivelIndex)
+
+        pop AX
         ret                     ; return True (wall.Type)
 
         calcColisionPared_continue:
@@ -1492,6 +1541,15 @@ updateGUI PROC
     mov AL, vidas
     call writeInt
 
+    mov AH, 09
+    lea DX, nivelText
+    int 21h
+
+    xor AX, AX
+    mov AL, nivel
+    inc AX
+    call writeInt
+
     ret
 updateGUI ENDP
 
@@ -1523,6 +1581,37 @@ writeInt PROC   ; AX = numero
     ret
 
 writeInt ENDP
+
+nivelCompletado PROC
+
+    inc nivel       ; nivel++
+
+    cmp nivel, 3
+    jl  nivelCompletado_siguienteNivel      ; si todavía hay niveles por jugar
+    jmp nivelCompletado_gameFinished
+
+    nivelCompletado_siguienteNivel:
+        mov kills, 0                ; reset kill counter
+        mov cantSpawneados, 0       ; reset cant spawneados
+
+        push SI
+        ; repo sicionar al jugador
+        lea SI, buffJugador
+        mov [SI], jugadorSpawnX
+        mov [SI + 2], jugadorSpawnY
+
+        pop SI
+
+        jmp nivelCompletado_return
+
+    nivelCompletado_gameFinished:
+        dec nivel   ; quedarse en el nivel actual para que no se rompa nada mientras salimos del juego
+        mov gg, 1   ; set juegoCompletado = true
+
+    nivelCompletado_return:
+    ret
+
+nivelCompletado ENDP
 
 main PROC
     mov AX, @data
@@ -1583,9 +1672,11 @@ main PROC
     ; JUEGO ;
     ;-------;
     main_loop:
-
         cmp vidas, 0
         jle game_over
+
+        cmp gg, 1
+        je  game_finished
         
         inc frameCounter
 
@@ -1631,14 +1722,45 @@ main PROC
 
         call spawnearEnemigo
     jmp main_loop
+
     game_over:
+        call limpiarPantalla
+        call dibujarPantalla
 
-    ; volver al modo texto
-    mov AX, 0003h
-    int 10h
+        mov AH, 9
+        lea DX, emptyLineText
+        int 21h
+        lea DX, gameOverText
+        int 21h
+        lea DX, emptyLineText
+        int 21h
 
-    ; Terminar programa
-    mov AH, 4Ch
-    int 21h
+    jmp exit
+
+    game_finished:
+        call limpiarPantalla
+        call dibujarPantalla
+
+        mov AH, 9
+        lea DX, emptyLineText
+        int 21h
+        lea DX, ggText
+        int 21h
+        lea DX, emptyLineText
+        int 21h
+
+    exit:
+        call updateGUI
+
+        mov AH, 9
+        lea DX, continuarText
+        int 21h
+
+        mov AH, 1
+        int 21h     ; esperar tecla
+
+        ; Terminar programa
+        mov AH, 4Ch
+        int 21h
 main ENDP
 END main
